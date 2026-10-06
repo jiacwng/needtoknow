@@ -1,0 +1,24 @@
+# local
+local/
+data/
+*.local.md
+runs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
