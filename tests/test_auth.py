@@ -1,54 +1,32 @@
 # auth.py turns a signed access token into principals and refuses every token it should.
-# Tokens are signed here with a throwaway RSA key, so no Keycloak server is needed.
+# Tokens are signed with the throwaway RSA key from conftest.py, so no Keycloak server is needed.
 
 import time
-from dataclasses import replace
+from collections.abc import Callable
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
-from jwt.algorithms import RSAAlgorithm
 
-from needtoknow.auth import AuthError, authenticate
-from needtoknow.config import load_settings
+from needtoknow.auth import AuthError, SigningKeyLookup, authenticate
+from needtoknow.config import Settings
 
-SETTINGS = replace(
-    load_settings(), issuer="http://keycloak.test/realms/needtoknow", client_id="needtoknow-api"
-)
-KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-OTHER_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-PUBLIC_KEY = jwt.PyJWK.from_dict(RSAAlgorithm.to_jwk(KEY.public_key(), as_dict=True))
+Sign = Callable[[dict[str, object]], str]
 
 
-def _signing_key(token: str) -> jwt.PyJWK:
-    return PUBLIC_KEY
-
-
-def _token(claims: dict[str, object], key: rsa.RSAPrivateKey = KEY) -> str:
-    now = int(time.time())
-    base: dict[str, object] = {
-        "iss": SETTINGS.issuer,
-        "aud": "account",
-        "azp": "needtoknow-api",
-        "typ": "Bearer",
-        "iat": now,
-        "exp": now + 300,
-        "preferred_username": "lukas",
-        "groups": ["finance"],
-    }
-    merged = {name: value for name, value in (base | claims).items() if value is not None}
-    return jwt.encode(merged, key, algorithm="RS256")
-
-
-def test_valid_token_gives_user_groups_and_everyone() -> None:
-    identity = authenticate(_token({}), SETTINGS, _signing_key)
+def test_valid_token_gives_user_groups_and_everyone(
+    sign_token: Sign, token_settings: Settings, token_signing_key: SigningKeyLookup
+) -> None:
+    identity = authenticate(sign_token({}), token_settings, token_signing_key)
 
     assert identity.user_id == "lukas"
     assert identity.principals == {"user:lukas", "group:everyone", "group:finance"}
 
 
-def test_missing_groups_gives_user_and_everyone() -> None:
-    identity = authenticate(_token({"groups": None}), SETTINGS, _signing_key)
+def test_missing_groups_gives_user_and_everyone(
+    sign_token: Sign, token_settings: Settings, token_signing_key: SigningKeyLookup
+) -> None:
+    identity = authenticate(sign_token({"groups": None}), token_settings, token_signing_key)
     assert identity.principals == {"user:lukas", "group:everyone"}
 
 
@@ -66,22 +44,34 @@ def test_missing_groups_gives_user_and_everyone() -> None:
         pytest.param({"groups": "finance"}, "groups must be a list", id="groups-not-a-list"),
     ],
 )
-def test_bad_claims_are_refused(claims: dict[str, object], reason: str) -> None:
+def test_bad_claims_are_refused(
+    claims: dict[str, object],
+    reason: str,
+    sign_token: Sign,
+    token_settings: Settings,
+    token_signing_key: SigningKeyLookup,
+) -> None:
     with pytest.raises(AuthError, match=reason):
-        authenticate(_token(claims), SETTINGS, _signing_key)
+        authenticate(sign_token(claims), token_settings, token_signing_key)
 
 
-def test_bad_signature_is_refused() -> None:
+def test_bad_signature_is_refused(
+    token_settings: Settings, token_signing_key: SigningKeyLookup
+) -> None:
+    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    token = jwt.encode({"preferred_username": "lukas"}, other_key, algorithm="RS256")
     with pytest.raises(AuthError, match="Signature verification failed"):
-        authenticate(_token({}, key=OTHER_KEY), SETTINGS, _signing_key)
+        authenticate(token, token_settings, token_signing_key)
 
 
-def test_symmetric_algorithm_is_refused() -> None:
+def test_symmetric_algorithm_is_refused(
+    token_settings: Settings, token_signing_key: SigningKeyLookup
+) -> None:
     token = jwt.encode({"preferred_username": "lukas"}, "a-shared-secret-of-32-bytes-long", "HS256")
     with pytest.raises(AuthError, match="invalid token"):
-        authenticate(token, SETTINGS, _signing_key)
+        authenticate(token, token_settings, token_signing_key)
 
 
-def test_garbage_is_refused() -> None:
+def test_garbage_is_refused(token_settings: Settings, token_signing_key: SigningKeyLookup) -> None:
     with pytest.raises(AuthError, match="invalid token"):
-        authenticate("not-a-token", SETTINGS, _signing_key)
+        authenticate("not-a-token", token_settings, token_signing_key)
