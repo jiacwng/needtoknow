@@ -7,8 +7,10 @@ import pytest
 from psycopg.rows import TupleRow
 
 from needtoknow.corpus import Corpus, Document, load_corpus
+from needtoknow.db import as_user
+from needtoknow.embed import embed_query
 from needtoknow.ingest import CORPUS
-from needtoknow.retrieval import MAX_RESULTS, search
+from needtoknow.retrieval import _NEAREST_CHUNKS, MAX_RESULTS, search
 
 Connection = psycopg.Connection[TupleRow]
 
@@ -67,6 +69,23 @@ def test_the_narrowest_employee_still_gets_k_results(app: Connection, corpus: Co
 
     assert narrowest == "julie"
     assert len(hits) == 5
+
+
+def test_the_query_reads_the_hnsw_index_and_needs_the_iterative_scan(
+    app: Connection, corpus: Corpus
+) -> None:
+    params = {"query": embed_query("salary bands and payroll"), "k": 5}
+    rows = {}
+    with as_user(app, corpus.employees["julie"].principals()):
+        plan = [row[0] for row in app.execute("EXPLAIN " + _NEAREST_CHUNKS, params).fetchall()]
+        app.execute("SET LOCAL hnsw.ef_search = 1")
+        for mode in ("off", "strict_order"):
+            app.execute("SELECT set_config('hnsw.iterative_scan', %s, true)", [mode])
+            rows[mode] = len(app.execute(_NEAREST_CHUNKS, params).fetchall())
+
+    assert any("chunks_embedding" in line for line in plan)
+    assert rows["off"] < 5
+    assert rows["strict_order"] == 5
 
 
 @pytest.mark.parametrize("k", [0, -1, MAX_RESULTS + 1])

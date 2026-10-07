@@ -49,3 +49,14 @@ def test_client_puts_group_names_in_the_access_token() -> None:
     assert config["claim.name"] == "groups"
     assert config["full.path"] == "false"
     assert config["access.token.claim"] == "true"
+
+
+def test_client_puts_itself_in_the_access_token_audience() -> None:
+    client = next(c for c in REALM["clients"] if c["clientId"] == "needtoknow-api")
+    mappers = [
+        m for m in client["protocolMappers"] if m["protocolMapper"] == "oidc-audience-mapper"
+    ]
+    assert len(mappers) == 1
+    config = mappers[0]["config"]
+    assert config["included.client.audience"] == "needtoknow-api"
+    assert config["access.token.claim"] == "true"

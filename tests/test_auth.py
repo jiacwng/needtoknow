@@ -3,12 +3,19 @@
 
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from needtoknow.auth import AuthError, SigningKeyLookup, authenticate
+from needtoknow.auth import (
+    AuthError,
+    AuthUnavailable,
+    SigningKeyLookup,
+    authenticate,
+    jwks_signing_key,
+)
 from needtoknow.config import Settings
 
 Sign = Callable[[dict[str, object]], str]
@@ -33,9 +40,12 @@ def test_missing_groups_gives_user_and_everyone(
 @pytest.mark.parametrize(
     ("claims", "reason"),
     [
-        pytest.param({"exp": int(time.time()) - 10}, "expired", id="expired"),
+        pytest.param({"exp": int(time.time()) - 60}, "expired", id="expired"),
         pytest.param({"exp": None}, "exp", id="no-expiry"),
+        pytest.param({"iat": int(time.time()) + 60}, "not yet valid", id="issued-in-the-future"),
         pytest.param({"iss": "http://evil.test/realms/needtoknow"}, "issuer", id="wrong-issuer"),
+        pytest.param({"aud": None}, '"aud"', id="no-audience"),
+        pytest.param({"aud": "account"}, "Audience doesn't match", id="wrong-audience"),
         pytest.param({"azp": "other-client"}, "issued to 'other-client'", id="wrong-azp"),
         pytest.param({"typ": "ID"}, "not an access token", id="id-token"),
         pytest.param({"preferred_username": None}, "preferred_username", id="no-username"),
@@ -53,6 +63,43 @@ def test_bad_claims_are_refused(
 ) -> None:
     with pytest.raises(AuthError, match=reason):
         authenticate(sign_token(claims), token_settings, token_signing_key)
+
+
+def test_audience_list_naming_the_api_is_accepted(
+    sign_token: Sign, token_settings: Settings, token_signing_key: SigningKeyLookup
+) -> None:
+    token = sign_token({"aud": ["account", token_settings.client_id]})
+    assert authenticate(token, token_settings, token_signing_key).user_id == "lukas"
+
+
+def test_clock_skew_within_thirty_seconds_is_accepted(
+    sign_token: Sign, token_settings: Settings, token_signing_key: SigningKeyLookup
+) -> None:
+    now = int(time.time())
+    issued_ahead = sign_token({"iat": now + 10})
+    expired_just_now = sign_token({"iat": now - 300, "exp": now - 10})
+
+    assert authenticate(issued_ahead, token_settings, token_signing_key).user_id == "lukas"
+    assert authenticate(expired_just_now, token_settings, token_signing_key).user_id == "lukas"
+
+
+def test_unreachable_key_server_is_unavailable_not_invalid(
+    sign_token: Sign, token_settings: Settings
+) -> None:
+    def signing_key(token: str) -> jwt.PyJWK:
+        raise jwt.PyJWKClientConnectionError("connection refused")
+
+    with pytest.raises(AuthUnavailable, match="cannot fetch the signing keys"):
+        authenticate(sign_token({}), token_settings, signing_key)
+
+
+def test_real_key_client_reports_a_closed_port_as_unavailable(
+    sign_token: Sign, token_settings: Settings
+) -> None:
+    # Nothing listens on port 9, so the connection is refused at once.
+    closed = replace(token_settings, issuer="http://127.0.0.1:9/realms/needtoknow")
+    with pytest.raises(AuthUnavailable):
+        authenticate(sign_token({}), closed, jwks_signing_key(closed))
 
 
 def test_bad_signature_is_refused(

@@ -8,16 +8,16 @@ from typing import Any
 
 import psycopg
 
-from needtoknow.config import load_settings
+from needtoknow.config import load_provision_settings, load_settings
 from needtoknow.corpus import Corpus, Document, load_corpus
-from needtoknow.db import (
+from needtoknow.embed import embed_passages
+from needtoknow.provision import (
     connect_admin,
     connect_owner,
     create_schema,
     load_documents,
     prepare_database,
 )
-from needtoknow.embed import embed_passages
 
 CORPUS = Path(__file__).resolve().parents[2] / "corpus"
 CHUNK_CHARS = 800
@@ -72,10 +72,11 @@ def ingest(owner: psycopg.Connection[Any], corpus: Corpus) -> Ingested:
 
 def main() -> None:
     settings = load_settings()
+    provision = load_provision_settings()
     corpus = load_corpus(CORPUS)
-    with connect_admin(settings) as admin:
-        prepare_database(admin, settings)
-    with connect_owner(settings) as owner:
+    with connect_admin(settings, provision) as admin:
+        prepare_database(admin, settings, provision)
+    with connect_owner(settings, provision) as owner:
         create_schema(owner)
         ingested = ingest(owner, corpus)
     print(

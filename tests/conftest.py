@@ -14,16 +14,11 @@ from jwt.algorithms import RSAAlgorithm
 from psycopg.rows import TupleRow
 
 from needtoknow.auth import SigningKeyLookup
-from needtoknow.config import Settings, load_settings
+from needtoknow.config import Settings, load_provision_settings, load_settings
 from needtoknow.corpus import Corpus, load_corpus
-from needtoknow.db import (
-    connect_admin,
-    connect_app,
-    connect_owner,
-    create_schema,
-    prepare_database,
-)
+from needtoknow.db import connect_app
 from needtoknow.ingest import CORPUS, ingest
+from needtoknow.provision import connect_admin, connect_owner, create_schema, prepare_database
 
 TOKEN_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
@@ -36,8 +31,9 @@ def corpus() -> Corpus:
 @pytest.fixture(scope="session")
 def owner(corpus: Corpus) -> Iterator[psycopg.Connection[TupleRow]]:
     settings = load_settings()
+    provision = load_provision_settings()
     try:
-        admin = connect_admin(settings)
+        admin = connect_admin(settings, provision)
     except psycopg.OperationalError as error:
         pytest.fail(
             f"cannot reach PostgreSQL at {settings.db_host}:{settings.db_port}, "
@@ -45,8 +41,8 @@ def owner(corpus: Corpus) -> Iterator[psycopg.Connection[TupleRow]]:
             pytrace=False,
         )
     with admin:
-        prepare_database(admin, settings)
-    with connect_owner(settings) as connection:
+        prepare_database(admin, settings, provision)
+    with connect_owner(settings, provision) as connection:
         create_schema(connection)
         ingest(connection, corpus)
         yield connection
@@ -82,7 +78,7 @@ def sign_token(token_settings: Settings) -> Callable[[dict[str, object]], str]:
         now = int(time.time())
         base: dict[str, object] = {
             "iss": token_settings.issuer,
-            "aud": "account",
+            "aud": token_settings.client_id,
             "azp": token_settings.client_id,
             "typ": "Bearer",
             "iat": now,

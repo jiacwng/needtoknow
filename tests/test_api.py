@@ -3,8 +3,10 @@
 # only documents the token's employee may read, and nothing in the body can change who is asking.
 
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
+import jwt
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
@@ -14,7 +16,7 @@ from fakes import final_reply, scripted, search_call
 from needtoknow.agent import REFUSAL
 from needtoknow.api import create_app
 from needtoknow.auth import SigningKeyLookup
-from needtoknow.config import Settings
+from needtoknow.config import Settings, load_settings
 from needtoknow.corpus import Corpus
 
 Sign = Callable[[dict[str, object]], str]
@@ -84,6 +86,20 @@ def test_search_with_garbage_is_refused(client: TestClient) -> None:
     response = client.post("/search", json=QUESTION, headers=_bearer("not-a-token"))
     assert response.status_code == 401
     assert response.headers["WWW-Authenticate"] == 'Bearer error="invalid_token"'
+
+
+def test_search_with_the_login_server_down_is_unavailable(
+    owner: psycopg.Connection[TupleRow], token_settings: Settings, sign_token: Sign
+) -> None:
+    def unreachable(token: str) -> jwt.PyJWK:
+        raise jwt.PyJWKClientConnectionError("connection refused")
+
+    with TestClient(create_app(token_settings, unreachable, scripted())) as down_client:
+        response = down_client.post("/search", json=QUESTION, headers=_julie(sign_token))
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "the login server cannot be reached"}
+    assert "WWW-Authenticate" not in response.headers
 
 
 def test_search_returns_only_documents_julie_can_read(
@@ -219,3 +235,43 @@ def test_ask_with_the_budget_spent_is_unavailable(
 
     assert response.status_code == 503
     assert model.prompts == []
+
+
+def test_concurrent_searches_each_answer_as_their_own_caller(
+    client: TestClient, sign_token: Sign, corpus: Corpus
+) -> None:
+    callers = {
+        "julie": _julie(sign_token),
+        "nadia": _bearer(sign_token({"preferred_username": "nadia", "groups": ["hr"]})),
+    }
+
+    def search_as(user: str) -> tuple[str, dict[str, object]]:
+        response = client.post("/search", json=QUESTION | {"k": 10}, headers=callers[user])
+        assert response.status_code == 200
+        return user, response.json()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        replies = list(pool.map(search_as, ["julie", "nadia"] * 20))
+
+    documents = {doc.id: doc for doc in corpus.documents}
+    found: dict[str, set[str]] = {"julie": set(), "nadia": set()}
+    for user, body in replies:
+        assert body["user"] == user
+        results = body["results"]
+        assert isinstance(results, list)
+        for result in results:
+            assert corpus.can_read(user, documents[result["doc_id"]])
+            found[user].add(result["doc_id"])
+    assert len(replies) == 40
+    assert SALARY_DOC in found["nadia"]
+    assert SALARY_DOC not in found["julie"]
+
+
+def test_the_api_settings_hold_no_provisioning_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("NEEDTOKNOW_ADMIN_USER", "NEEDTOKNOW_ADMIN_PASSWORD", "NEEDTOKNOW_OWNER_PASSWORD"):
+        monkeypatch.setenv(name, "provisioning-secret")
+    settings = load_settings()
+
+    assert "provisioning-secret" not in repr(settings)
+    assert not hasattr(settings, "admin_password")
+    assert not hasattr(settings, "owner_password")
