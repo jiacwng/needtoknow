@@ -1,0 +1,20 @@
+# Local services. The database is reachable from this machine only.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: needtoknow
+      POSTGRES_PASSWORD: needtoknow
+      POSTGRES_DB: needtoknow
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U needtoknow -d needtoknow"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  db-data:
