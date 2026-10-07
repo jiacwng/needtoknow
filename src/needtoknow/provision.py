@@ -1,5 +1,5 @@
-# Sets up the database: the admin creates the owner and app roles, the owner creates the tables
-# and loads the documents. Only ingestion and the tests run this; the API never does.
+# Sets up the database: the admin creates the owner, app and reader roles, the owner creates the
+# tables and loads the documents. Only ingestion and the tests run this; the API never does.
 
 from pathlib import Path
 from typing import Any
@@ -11,7 +11,7 @@ from psycopg.rows import TupleRow
 
 from needtoknow.config import ProvisionSettings, Settings
 from needtoknow.corpus import Corpus
-from needtoknow.db import APP_ROLE, connect
+from needtoknow.db import APP_ROLE, READER_ROLE, connect
 
 OWNER_ROLE = "needtoknow_owner"
 SCHEMA = Path(__file__).resolve().parents[2] / "sql" / "schema.sql"
@@ -24,6 +24,9 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'needtoknow_app') THEN
         CREATE ROLE needtoknow_app;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'needtoknow_reader') THEN
+        CREATE ROLE needtoknow_reader;
     END IF;
 END
 $$
@@ -49,6 +52,7 @@ def prepare_database(
     for role, password in (
         (OWNER_ROLE, provision.owner_password),
         (APP_ROLE, settings.app_password),
+        (READER_ROLE, provision.reader_password),
     ):
         # ALTER ROLE takes no bind parameters, so the password is quoted by psycopg instead.
         admin.execute(
@@ -58,6 +62,7 @@ def prepare_database(
         )
     admin.execute("GRANT USAGE, CREATE ON SCHEMA public TO needtoknow_owner")
     admin.execute("GRANT USAGE ON SCHEMA public TO needtoknow_app")
+    admin.execute("GRANT USAGE ON SCHEMA public TO needtoknow_reader")
 
 
 def create_schema(owner: psycopg.Connection[Any]) -> None:

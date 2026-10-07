@@ -1,6 +1,7 @@
 # Loads the fictional company and its documents from corpus/, and refuses any corpus whose
 # planted facts could make the evaluation report a leak that is not one, or miss one that is.
 
+import re
 import tomllib
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -10,6 +11,14 @@ from typing import Any
 EVERYONE = "group:everyone"
 FRONT_MATTER = "+++"
 PLANTED_KEYS = frozenset({"fact", "question", "allowed_user", "denied_user"})
+# A number of four digits or fewer turns up in answers by chance and is written in many ways,
+# so a fact made only of a number, its unit and its currency needs at least five digits.
+MIN_NUMBER_DIGITS = 5
+NUMBER_WORDS = frozenset(
+    {"percent", "x", "times", "k", "m", "thousand", "million", "billion", "eur", "euros", "usd"}
+)
+
+_THOUSANDS_SEPARATOR = re.compile(r"(?<=\d)[, ](?=\d{3}(?!\d))")
 
 
 class CorpusError(ValueError):
@@ -61,6 +70,11 @@ class Corpus:
 
     def can_read(self, user_id: str, document: Document) -> bool:
         return not self.employees[user_id].principals().isdisjoint(document.readers)
+
+
+def canonical(text: str) -> str:
+    text = " ".join(text.lower().replace("%", " percent").split())
+    return _THOUSANDS_SEPARATOR.sub("", text)
 
 
 def load_corpus(root: Path) -> Corpus:
@@ -157,7 +171,7 @@ def _check_documents(corpus: Corpus) -> list[str]:
     for employee in corpus.employees.values():
         known |= employee.principals()
 
-    facts = [doc.planted.fact for doc in corpus.documents if doc.planted is not None]
+    facts = [canonical(doc.planted.fact) for doc in corpus.documents if doc.planted is not None]
     for fact in sorted({f for f in facts if facts.count(f) > 1}):
         problems.append(f"fact {fact!r} is planted in more than one document")
 
@@ -174,10 +188,16 @@ def _check_documents(corpus: Corpus) -> list[str]:
             problems.append(f"{doc.id}: a document readable by everyone cannot hold a planted fact")
 
         planted = doc.planted
-        if planted.fact not in doc.body:
+        fact = canonical(planted.fact)
+        if _is_short_number(fact):
+            problems.append(
+                f"{doc.id}: fact {planted.fact!r} is a number with fewer than "
+                f"{MIN_NUMBER_DIGITS} digits, use a code or a name instead"
+            )
+        if fact not in canonical(doc.body):
             problems.append(f"{doc.id}: fact {planted.fact!r} does not appear in the document")
         for other in corpus.documents:
-            if other is not doc and planted.fact in other.title + "\n" + other.body:
+            if other is not doc and fact in canonical(other.title + "\n" + other.body):
                 problems.append(f"{doc.id}: fact {planted.fact!r} also appears in {other.id}")
 
         for role, user_id, should_read in (
@@ -190,6 +210,12 @@ def _check_documents(corpus: Corpus) -> list[str]:
                 verb = "cannot" if should_read else "can"
                 problems.append(f"{doc.id}: {role} {user_id} {verb} read the document")
     return problems
+
+
+def _is_short_number(fact: str) -> bool:
+    words = re.findall(r"[a-z]+", fact)
+    digits = re.findall(r"\d", fact)
+    return all(word in NUMBER_WORDS for word in words) and len(digits) < MIN_NUMBER_DIGITS
 
 
 def _text(table: dict[str, Any], key: str, where: str) -> str:

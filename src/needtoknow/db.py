@@ -10,9 +10,10 @@ from pgvector.psycopg import register_vector
 from psycopg.pq import TransactionStatus
 from psycopg.rows import TupleRow
 
-from needtoknow.config import Settings
+from needtoknow.config import ProvisionSettings, Settings
 
 APP_ROLE = "needtoknow_app"
+READER_ROLE = "needtoknow_reader"
 
 
 def connect(settings: Settings, user: str, password: str) -> psycopg.Connection[TupleRow]:
@@ -28,6 +29,14 @@ def connect(settings: Settings, user: str, password: str) -> psycopg.Connection[
 
 def connect_app(settings: Settings) -> psycopg.Connection[TupleRow]:
     connection = connect(settings, APP_ROLE, settings.app_password)
+    register_vector(connection)
+    return connection
+
+
+def connect_reader(
+    settings: Settings, provision: ProvisionSettings
+) -> psycopg.Connection[TupleRow]:
+    connection = connect(settings, READER_ROLE, provision.reader_password)
     register_vector(connection)
     return connection
 

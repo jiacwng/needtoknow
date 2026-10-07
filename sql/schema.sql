@@ -28,6 +28,7 @@ CREATE TABLE chunks (
 CREATE INDEX chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops);
 
 GRANT SELECT ON documents, doc_access, chunks TO needtoknow_app;
+GRANT SELECT ON documents, doc_access, chunks TO needtoknow_reader;
 
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE doc_access ENABLE ROW LEVEL SECURITY;
@@ -59,3 +60,9 @@ USING (
           AND doc_access.principal = ANY (string_to_array(current_setting('app.principals', true), ','))
     )
 );
+
+-- needtoknow_reader is the evaluation's model of an application the database does not protect:
+-- it reads every row, and its own SQL or code must drop what the asker may not see.
+CREATE POLICY documents_reader ON documents FOR SELECT TO needtoknow_reader USING (true);
+CREATE POLICY doc_access_reader ON doc_access FOR SELECT TO needtoknow_reader USING (true);
+CREATE POLICY chunks_reader ON chunks FOR SELECT TO needtoknow_reader USING (true);

@@ -11,9 +11,17 @@ from langchain_core.messages import ToolMessage
 from psycopg.rows import TupleRow
 
 from fakes import USAGE, ScriptedModel, final_reply, scripted, search_call
-from needtoknow.agent import MAX_TOOL_ROUNDS, REFUSAL, Answer, ask
+from needtoknow.agent import (
+    MAX_TOOL_ROUNDS,
+    REFUSAL,
+    SEARCH_RESULTS,
+    SYSTEM_PROMPT,
+    Answer,
+    ask,
+)
 from needtoknow.config import load_settings
 from needtoknow.corpus import Corpus
+from needtoknow.methods import Method
 from needtoknow.providers import BudgetExceeded, Spending, chat_model, price_of
 
 Connection = psycopg.Connection[TupleRow]
@@ -193,3 +201,61 @@ def test_the_price_table_matches_the_list_prices() -> None:
     assert price_of("claude-haiku-5-5").cost(1_000_000, 1_000_000) == pytest.approx(0.60)
     assert price_of("claude-sonnet-5-5").cost(1_000_000, 1_000_000) == pytest.approx(12.00)
     assert price_of("claude-opus-5-5").cost(1_000_000, 1_000_000) == pytest.approx(24.00)
+
+
+@pytest.mark.parametrize("method", [Method.IN_QUERY, Method.POST_FILTER])
+def test_the_application_filters_hide_denied_documents_from_the_model(
+    reader: Connection, corpus: Corpus, method: Method
+) -> None:
+    model = scripted(search_call({"query": QUESTION}), final_reply(REFUSAL))
+    principals = corpus.employees["sofia"].principals()
+
+    ask(QUESTION, reader, principals, model, Spending(MODEL, budget_usd=1.0), method)
+
+    (result,) = _tool_results(model)
+    documents = {doc.id: doc for doc in corpus.documents}
+    returned = _tagged_ids(result)
+    assert len(returned) >= 1
+    for doc_id in returned:
+        assert corpus.can_read("sofia", documents[doc_id])
+    assert "78,400" not in result.text
+    assert model.prompts[0][0].text == SYSTEM_PROMPT
+
+
+def test_prompt_only_labels_every_passage_and_names_the_asker(
+    reader: Connection, corpus: Corpus
+) -> None:
+    model = scripted(search_call({"query": QUESTION}), final_reply(REFUSAL))
+    principals = corpus.employees["sofia"].principals()
+
+    ask(QUESTION, reader, principals, model, Spending(MODEL, budget_usd=1.0), Method.PROMPT_ONLY)
+
+    (result,) = _tool_results(model)
+    salary = next(doc for doc in corpus.documents if doc.id == SALARY_DOC)
+    assert f"[{SALARY_DOC}] (readers: {', '.join(sorted(salary.readers))})\n" in result.text
+    assert "78,400" in result.text
+    labels = re.findall(r"^\[[a-z0-9-]+\] \(readers: [^)]+\)$", result.text, flags=re.MULTILINE)
+    assert len(labels) == SEARCH_RESULTS
+    system_prompt = model.prompts[0][0].text
+    assert "group:everyone, group:sales, user:sofia" in system_prompt
+    assert "Use only passages whose readers include one of those principals" in system_prompt
+
+
+def test_the_default_method_is_rls_with_unlabelled_passages(
+    app: Connection, corpus: Corpus
+) -> None:
+    model = scripted(search_call({"query": QUESTION}), final_reply(REFUSAL))
+
+    _ask(app, corpus, "nadia", model)
+
+    (result,) = _tool_results(model)
+    assert "(readers:" not in result.text
+    assert model.prompts[0][0].text == SYSTEM_PROMPT
+
+
+def test_a_method_on_the_wrong_role_is_refused(app: Connection, corpus: Corpus) -> None:
+    model = scripted(search_call({"query": QUESTION}), final_reply(REFUSAL))
+    principals = corpus.employees["sofia"].principals()
+
+    with pytest.raises(ValueError, match="prompt_only searches as needtoknow_reader"):
+        ask(QUESTION, app, principals, model, Spending(MODEL, budget_usd=1.0), Method.PROMPT_ONLY)
