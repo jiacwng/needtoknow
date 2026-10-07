@@ -8,7 +8,7 @@ version = "0.0.0"
 description = "A company AI assistant that never uses a document the person asking cannot open."
 requires-python = ">=3.12"
 authors = [{ name = "Wang Jiacheng" }]
-dependencies = []
+dependencies = ["psycopg[binary]>=3.3"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
