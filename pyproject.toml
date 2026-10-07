@@ -8,7 +8,7 @@ version = "0.0.0"
 description = "A company AI assistant that never uses a document the person asking cannot open."
 requires-python = ">=3.12"
 authors = [{ name = "Wang Jiacheng" }]
-dependencies = ["psycopg[binary]>=3.3", "fastembed>=0.9", "pgvector>=0.5"]
+dependencies = ["psycopg[binary]>=3.3", "fastembed>=0.9", "pgvector>=0.5", "pyjwt[crypto]>=2.10"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -33,3 +33,4 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["keycloak: needs the Keycloak server from compose.yaml"]

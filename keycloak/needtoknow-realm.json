@@ -1,0 +1,268 @@
+{
+  "realm": "needtoknow",
+  "displayName": "Calder Systems (development only, every user's password is needtoknow)",
+  "enabled": true,
+  "groups": [
+    {
+      "name": "executives"
+    },
+    {
+      "name": "finance"
+    },
+    {
+      "name": "engineering"
+    },
+    {
+      "name": "hr"
+    },
+    {
+      "name": "sales"
+    }
+  ],
+  "users": [
+    {
+      "username": "elena",
+      "enabled": true,
+      "email": "elena@calder.example",
+      "emailVerified": true,
+      "firstName": "Elena",
+      "lastName": "Duval",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/executives"
+      ]
+    },
+    {
+      "username": "tomas",
+      "enabled": true,
+      "email": "tomas@calder.example",
+      "emailVerified": true,
+      "firstName": "Tomas",
+      "lastName": "Lindqvist",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/executives",
+        "/finance"
+      ]
+    },
+    {
+      "username": "rafael",
+      "enabled": true,
+      "email": "rafael@calder.example",
+      "emailVerified": true,
+      "firstName": "Rafael",
+      "lastName": "Ortega",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/executives",
+        "/engineering"
+      ]
+    },
+    {
+      "username": "chloe",
+      "enabled": true,
+      "email": "chloe@calder.example",
+      "emailVerified": true,
+      "firstName": "Chloe",
+      "lastName": "Martin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/hr"
+      ]
+    },
+    {
+      "username": "nadia",
+      "enabled": true,
+      "email": "nadia@calder.example",
+      "emailVerified": true,
+      "firstName": "Nadia",
+      "lastName": "Benali",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/hr"
+      ]
+    },
+    {
+      "username": "marco",
+      "enabled": true,
+      "email": "marco@calder.example",
+      "emailVerified": true,
+      "firstName": "Marco",
+      "lastName": "Bianchi",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/sales"
+      ]
+    },
+    {
+      "username": "sofia",
+      "enabled": true,
+      "email": "sofia@calder.example",
+      "emailVerified": true,
+      "firstName": "Sofia",
+      "lastName": "Novak",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/sales"
+      ]
+    },
+    {
+      "username": "ben",
+      "enabled": true,
+      "email": "ben@calder.example",
+      "emailVerified": true,
+      "firstName": "Ben",
+      "lastName": "Carter",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/sales"
+      ]
+    },
+    {
+      "username": "lukas",
+      "enabled": true,
+      "email": "lukas@calder.example",
+      "emailVerified": true,
+      "firstName": "Lukas",
+      "lastName": "Weber",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/finance"
+      ]
+    },
+    {
+      "username": "amir",
+      "enabled": true,
+      "email": "amir@calder.example",
+      "emailVerified": true,
+      "firstName": "Amir",
+      "lastName": "Haddad",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/engineering"
+      ]
+    },
+    {
+      "username": "julie",
+      "enabled": true,
+      "email": "julie@calder.example",
+      "emailVerified": true,
+      "firstName": "Julie",
+      "lastName": "Moreau",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/engineering"
+      ]
+    },
+    {
+      "username": "oskar",
+      "enabled": true,
+      "email": "oskar@calder.example",
+      "emailVerified": true,
+      "firstName": "Oskar",
+      "lastName": "Nilsson",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "needtoknow",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/engineering"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "needtoknow-api",
+      "name": "needtoknow",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}
