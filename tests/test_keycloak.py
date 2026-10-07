@@ -1,5 +1,6 @@
 # Logs in as each employee through the running Keycloak and checks that auth.py derives the same
-# principals from the real token as the corpus gives that employee.
+# principals from the real token as the corpus gives that employee, and that the API searches as
+# the employee who holds the token.
 
 import json
 import urllib.error
@@ -8,8 +9,12 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import psycopg
 import pytest
+from fastapi.testclient import TestClient
+from psycopg.rows import TupleRow
 
+from needtoknow.api import create_app
 from needtoknow.auth import (
     AuthError,
     SigningKeyLookup,
@@ -72,3 +77,22 @@ def test_token_gives_the_corpus_principals(username: str, signing_key: SigningKe
 def test_id_token_is_refused(signing_key: SigningKeyLookup) -> None:
     with pytest.raises(AuthError, match="not an access token"):
         authenticate(_login("julie")["id_token"], SETTINGS, signing_key)
+
+
+def test_search_answers_as_the_token_holder(
+    owner: psycopg.Connection[TupleRow], signing_key: SigningKeyLookup
+) -> None:
+    pipeline = next(doc for doc in CORPUS.documents if doc.id == "sales-pipeline-q4")
+    assert pipeline.planted is not None
+    question = {"query": pipeline.planted.question}
+    with TestClient(create_app(SETTINGS, signing_key)) as client:
+        found: dict[str, list[str]] = {}
+        for username in ("sofia", "lukas"):
+            headers = {"Authorization": f"Bearer {_login(username)['access_token']}"}
+            response = client.post("/search", json=question, headers=headers)
+            assert response.status_code == 200
+            assert response.json()["user"] == username
+            found[username] = [result["doc_id"] for result in response.json()["results"]]
+
+    assert "sales-pipeline-q4" in found["sofia"]
+    assert "sales-pipeline-q4" not in found["lukas"]
