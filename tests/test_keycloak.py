@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from psycopg.rows import TupleRow
 
+from fakes import scripted
 from needtoknow.api import create_app
 from needtoknow.auth import (
     AuthError,
@@ -85,7 +86,7 @@ def test_search_answers_as_the_token_holder(
     pipeline = next(doc for doc in CORPUS.documents if doc.id == "sales-pipeline-q4")
     assert pipeline.planted is not None
     question = {"query": pipeline.planted.question}
-    with TestClient(create_app(SETTINGS, signing_key)) as client:
+    with TestClient(create_app(SETTINGS, signing_key, scripted())) as client:
         found: dict[str, list[str]] = {}
         for username in ("sofia", "lukas"):
             headers = {"Authorization": f"Bearer {_login(username)['access_token']}"}
