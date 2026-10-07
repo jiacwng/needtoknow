@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
+from pgvector.psycopg import register_vector
 from psycopg import sql
 from psycopg.pq import TransactionStatus
 from psycopg.rows import TupleRow
@@ -36,12 +37,17 @@ def connect_admin(settings: Settings) -> psycopg.Connection[TupleRow]:
     return _connect(settings, settings.admin_user, settings.admin_password)
 
 
+# The admin connects before the vector extension exists, so only the owner and app register it.
 def connect_owner(settings: Settings) -> psycopg.Connection[TupleRow]:
-    return _connect(settings, OWNER_ROLE, settings.owner_password)
+    connection = _connect(settings, OWNER_ROLE, settings.owner_password)
+    register_vector(connection)
+    return connection
 
 
 def connect_app(settings: Settings) -> psycopg.Connection[TupleRow]:
-    return _connect(settings, APP_ROLE, settings.app_password)
+    connection = _connect(settings, APP_ROLE, settings.app_password)
+    register_vector(connection)
+    return connection
 
 
 def prepare_database(admin: psycopg.Connection[Any], settings: Settings) -> None:

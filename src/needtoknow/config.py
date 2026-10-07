@@ -1,8 +1,9 @@
-# Settings read from NEEDTOKNOW_* environment variables. The defaults are the development
-# values from compose.yaml.
+# Settings read from NEEDTOKNOW_* environment variables. The database defaults are the
+# development values from compose.yaml.
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,7 @@ class Settings:
     admin_password: str
     owner_password: str
     app_password: str
+    model_cache: Path
 
 
 def load_settings() -> Settings:
@@ -26,4 +28,7 @@ def load_settings() -> Settings:
         admin_password=env.get("NEEDTOKNOW_ADMIN_PASSWORD", "needtoknow"),
         owner_password=env.get("NEEDTOKNOW_OWNER_PASSWORD", "needtoknow_owner"),
         app_password=env.get("NEEDTOKNOW_APP_PASSWORD", "needtoknow_app"),
+        model_cache=Path(
+            env.get("NEEDTOKNOW_MODEL_CACHE", "~/.cache/needtoknow/models")
+        ).expanduser(),
     )
