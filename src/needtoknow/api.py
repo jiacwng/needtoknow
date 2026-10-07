@@ -1,8 +1,10 @@
 # The HTTP API. Every request is answered as the employee named in its bearer token, and nothing
 # in the request body can change who that is.
 # Run locally: docker compose up -d --wait, PYTHONPATH=src .venv/bin/python -m needtoknow.ingest,
-# then .venv/bin/uvicorn --app-dir src needtoknow.api:app
+# then .venv/bin/uvicorn --app-dir src --factory needtoknow.api:create_default_app
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -11,8 +13,16 @@ from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, ConfigDict, Field
 
 from needtoknow import agent, db, retrieval
-from needtoknow.auth import AuthError, Identity, SigningKeyLookup, authenticate, jwks_signing_key
+from needtoknow.auth import (
+    AuthError,
+    AuthUnavailable,
+    Identity,
+    SigningKeyLookup,
+    authenticate,
+    jwks_signing_key,
+)
 from needtoknow.config import Settings, load_settings
+from needtoknow.embed import embed_query
 from needtoknow.providers import BudgetExceeded, Spending, chat_model
 
 _bearer = HTTPBearer(auto_error=False)
@@ -44,7 +54,7 @@ class AskResponse(BaseModel):
 
 
 def create_app(settings: Settings, signing_key: SigningKeyLookup, model: BaseChatModel) -> FastAPI:
-    api = FastAPI(title="needtoknow")
+    api = FastAPI(title="needtoknow", lifespan=_load_embedding_model)
     spending = Spending(settings.model, settings.budget_usd)
 
     def current_identity(
@@ -56,6 +66,11 @@ def create_app(settings: Settings, signing_key: SigningKeyLookup, model: BaseCha
             return authenticate(credentials.credentials, settings, signing_key)
         except AuthError:
             raise _unauthorized("invalid_token") from None
+        except AuthUnavailable:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="the login server cannot be reached",
+            ) from None
 
     @api.get("/health")
     def health() -> dict[str, str]:
@@ -95,6 +110,18 @@ def create_app(settings: Settings, signing_key: SigningKeyLookup, model: BaseCha
     return api
 
 
+def create_default_app() -> FastAPI:
+    settings = load_settings()
+    return create_app(settings, jwks_signing_key(settings), chat_model(settings))
+
+
+# The first query would otherwise wait several seconds for the embedding model to load.
+@asynccontextmanager
+async def _load_embedding_model(api: FastAPI) -> AsyncIterator[None]:
+    embed_query("warm up")
+    yield
+
+
 def _unauthorized(error: str | None) -> HTTPException:
     # RFC 6750: a request without a token gets a bare challenge, a rejected token names the error.
     challenge = "Bearer" if error is None else f'Bearer error="{error}"'
@@ -103,7 +130,3 @@ def _unauthorized(error: str | None) -> HTTPException:
         detail="missing bearer token" if error is None else "invalid bearer token",
         headers={"WWW-Authenticate": challenge},
     )
-
-
-_settings = load_settings()
-app = create_app(_settings, jwks_signing_key(_settings), chat_model(_settings))

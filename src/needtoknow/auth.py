@@ -5,13 +5,20 @@ from dataclasses import dataclass
 
 import jwt
 
+from needtoknow import corpus
 from needtoknow.config import Settings
-from needtoknow.corpus import EVERYONE
 
 SigningKeyLookup = Callable[[str], jwt.PyJWK]
 
+JWKS_TIMEOUT_SECONDS = 5
+CLOCK_SKEW_SECONDS = 30
+
 
 class AuthError(Exception):
+    pass
+
+
+class AuthUnavailable(Exception):
     pass
 
 
@@ -22,24 +29,27 @@ class Identity:
 
 
 def jwks_signing_key(settings: Settings) -> SigningKeyLookup:
-    client = jwt.PyJWKClient(f"{settings.issuer}/protocol/openid-connect/certs")
+    client = jwt.PyJWKClient(
+        f"{settings.issuer}/protocol/openid-connect/certs", timeout=JWKS_TIMEOUT_SECONDS
+    )
     return client.get_signing_key_from_jwt
 
 
 def authenticate(token: str, settings: Settings, signing_key: SigningKeyLookup) -> Identity:
-    # Keycloak does not put this client in aud, so azp is the claim that names the
-    # client the token was issued to. typ separates an access token from an ID token.
+    # aud names the API the token is meant for, azp the client that asked for it; here both are
+    # the needtoknow-api client. typ separates an access token from an ID token.
     try:
         claims = jwt.decode(
             token,
             signing_key(token),
             algorithms=["RS256"],
+            audience=settings.client_id,
             issuer=settings.issuer,
-            options={
-                "require": ["exp", "iat", "iss", "azp", "typ", "preferred_username"],
-                "verify_aud": False,
-            },
+            leeway=CLOCK_SKEW_SECONDS,
+            options={"require": ["exp", "iat", "iss", "aud", "azp", "typ", "preferred_username"]},
         )
+    except jwt.PyJWKClientConnectionError as error:
+        raise AuthUnavailable(f"cannot fetch the signing keys: {error}") from error
     except jwt.PyJWTError as error:
         raise AuthError(f"invalid token: {error}") from error
 
@@ -59,5 +69,4 @@ def authenticate(token: str, settings: Settings, signing_key: SigningKeyLookup) 
         if "," in name:
             raise AuthError(f"{name!r} contains a comma")
 
-    principals = frozenset({f"user:{username}", EVERYONE, *(f"group:{g}" for g in groups)})
-    return Identity(user_id=username, principals=principals)
+    return Identity(user_id=username, principals=corpus.principals(username, groups))

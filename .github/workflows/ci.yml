@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 10
     services:
       db:
-        image: pgvector/pgvector:pg17
+        image: pgvector/pgvector:0.8.7-pg17
         env:
           POSTGRES_USER: needtoknow
           POSTGRES_PASSWORD: needtoknow
@@ -31,10 +31,6 @@ jobs:
           --health-timeout 5s
           --health-retries 30
     env:
-      PGHOST: localhost
-      PGUSER: needtoknow
-      PGPASSWORD: needtoknow
-      PGDATABASE: needtoknow
       NEEDTOKNOW_MODEL_CACHE: /home/runner/.cache/needtoknow/models
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,5 +59,3 @@ jobs:
           http://localhost:8080/realms/needtoknow/.well-known/openid-configuration > /dev/null;
           do sleep 2; done' || { docker logs keycloak; exit 1; }
       - run: pytest
-      - name: pgvector is available
-        run: psql -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector'"

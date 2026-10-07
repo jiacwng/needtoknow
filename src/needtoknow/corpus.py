@@ -2,6 +2,7 @@
 # planted facts could make the evaluation report a leak that is not one, or miss one that is.
 
 import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,10 @@ class CorpusError(ValueError):
     pass
 
 
+def principals(user_id: str, groups: Iterable[str]) -> frozenset[str]:
+    return frozenset({f"user:{user_id}", EVERYONE, *(f"group:{g}" for g in groups)})
+
+
 @dataclass(frozen=True)
 class Employee:
     id: str
@@ -24,7 +29,7 @@ class Employee:
     manager: str | None
 
     def principals(self) -> frozenset[str]:
-        return frozenset({f"user:{self.id}", EVERYONE, *(f"group:{g}" for g in self.groups)})
+        return principals(self.id, self.groups)
 
 
 @dataclass(frozen=True)

@@ -9,8 +9,9 @@ from psycopg.pq import TransactionStatus
 from psycopg.rows import TupleRow
 
 from needtoknow.corpus import Corpus
-from needtoknow.db import APP_ROLE, OWNER_ROLE, as_user
+from needtoknow.db import APP_ROLE, as_user
 from needtoknow.ingest import ingest, split_into_chunks
+from needtoknow.provision import OWNER_ROLE
 
 Connection = psycopg.Connection[TupleRow]
 

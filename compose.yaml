@@ -1,7 +1,7 @@
 # Local services. The database is reachable from this machine only.
 services:
   db:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:0.8.7-pg17
     environment:
       POSTGRES_USER: needtoknow
       POSTGRES_PASSWORD: needtoknow
