@@ -1,5 +1,5 @@
-# Settings read from NEEDTOKNOW_* environment variables. The database defaults are the
-# development values from compose.yaml.
+# Settings read from NEEDTOKNOW_* environment variables. The defaults are the development
+# values from compose.yaml.
 
 import os
 from dataclasses import dataclass
@@ -16,6 +16,8 @@ class Settings:
     owner_password: str
     app_password: str
     model_cache: Path
+    issuer: str
+    client_id: str
 
 
 def load_settings() -> Settings:
@@ -31,4 +33,6 @@ def load_settings() -> Settings:
         model_cache=Path(
             env.get("NEEDTOKNOW_MODEL_CACHE", "~/.cache/needtoknow/models")
         ).expanduser(),
+        issuer=env.get("NEEDTOKNOW_ISSUER", "http://localhost:8080/realms/needtoknow"),
+        client_id=env.get("NEEDTOKNOW_CLIENT_ID", "needtoknow-api"),
     )
