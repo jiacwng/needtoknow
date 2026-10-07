@@ -16,7 +16,7 @@ from psycopg.rows import TupleRow
 from needtoknow.auth import SigningKeyLookup
 from needtoknow.config import Settings, load_provision_settings, load_settings
 from needtoknow.corpus import Corpus, load_corpus
-from needtoknow.db import connect_app
+from needtoknow.db import connect_app, connect_reader
 from needtoknow.ingest import CORPUS, ingest
 from needtoknow.provision import connect_admin, connect_owner, create_schema, prepare_database
 
@@ -51,6 +51,12 @@ def owner(corpus: Corpus) -> Iterator[psycopg.Connection[TupleRow]]:
 @pytest.fixture(scope="session")
 def app(owner: psycopg.Connection[TupleRow]) -> Iterator[psycopg.Connection[TupleRow]]:
     with connect_app(load_settings()) as connection:
+        yield connection
+
+
+@pytest.fixture(scope="session")
+def reader(owner: psycopg.Connection[TupleRow]) -> Iterator[psycopg.Connection[TupleRow]]:
+    with connect_reader(load_settings(), load_provision_settings()) as connection:
         yield connection
 
 

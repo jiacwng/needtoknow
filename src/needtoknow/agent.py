@@ -18,11 +18,11 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
 
-from needtoknow import retrieval
 from needtoknow.config import load_settings
 from needtoknow.corpus import load_corpus
 from needtoknow.db import connect_app
 from needtoknow.ingest import CORPUS
+from needtoknow.methods import Method, Results, search
 from needtoknow.providers import Spending, chat_model
 
 REFUSAL = "I found nothing you have access to on this."
@@ -34,6 +34,16 @@ Call search_documents to find passages. It returns only documents the employee a
 so you can share anything in them. Answer only from the passages it returns.
 Cite every claim with the document id in square brackets, for example [some-document-id].
 If the passages do not contain the answer, reply exactly: {REFUSAL}"""
+
+# Under prompt_only the search returns every document, and only this instruction stands between
+# the asker and the passages they may not read.
+LABELLED_SYSTEM_PROMPT = f"""You answer questions from employees using their company's documents.
+Call search_documents to find passages. It returns passages from every document, each labelled
+with the readers allowed to see it. The employee asking holds these principals: {{principals}}.
+Use only passages whose readers include one of those principals, and treat every other passage
+as if it did not exist. Answer only from the passages you may use.
+Cite every claim with the document id in square brackets, for example [some-document-id].
+If the passages you may use do not contain the answer, reply exactly: {REFUSAL}"""
 
 SEARCH_TOOL = {
     "name": "search_documents",
@@ -72,20 +82,21 @@ class AgentState(TypedDict):
 
 def ask(
     question: str,
-    app: psycopg.Connection[Any],
+    connection: psycopg.Connection[Any],
     principals: frozenset[str],
     model: BaseChatModel,
     spending: Spending,
+    method: Method = Method.RLS,
 ) -> Answer:
     returned: set[str] = set()
 
     # The principals are fixed here, outside the model's reach: the tool takes only a query.
     def search_documents(query: str) -> str:
-        hits = retrieval.search(app, principals, query, SEARCH_RESULTS)
-        returned.update(hit.doc_id for hit in hits)
-        return _format_hits(hits)
+        results = search(connection, principals, query, SEARCH_RESULTS, method)
+        returned.update(hit.doc_id for hit in results.hits)
+        return _format_hits(results)
 
-    graph = _build_graph(model, search_documents, spending)
+    graph = _build_graph(model, _system_prompt(method, principals), search_documents, spending)
     final = graph.invoke(
         {
             "messages": [HumanMessage(question)],
@@ -97,14 +108,23 @@ def ask(
     return _answer(final, returned, spending)
 
 
+def _system_prompt(method: Method, principals: frozenset[str]) -> str:
+    if method is Method.PROMPT_ONLY:
+        return LABELLED_SYSTEM_PROMPT.format(principals=", ".join(sorted(principals)))
+    return SYSTEM_PROMPT
+
+
 def _build_graph(
-    model: BaseChatModel, search_documents: Callable[[str], str], spending: Spending
+    model: BaseChatModel,
+    system_prompt: str,
+    search_documents: Callable[[str], str],
+    spending: Spending,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     model_with_tools = model.bind_tools([SEARCH_TOOL], strict=True)
 
     def call_model(state: AgentState) -> dict[str, Any]:
         spending.check()
-        reply = model_with_tools.invoke([SystemMessage(SYSTEM_PROMPT), *state["messages"]])
+        reply = model_with_tools.invoke([SystemMessage(system_prompt), *state["messages"]])
         if reply.usage_metadata is None:
             raise RuntimeError("the model reply carries no token usage, so it cannot be priced")
         input_tokens = reply.usage_metadata["input_tokens"]
@@ -145,10 +165,16 @@ def _run_tool(call: ToolCall, search_documents: Callable[[str], str]) -> ToolMes
     return ToolMessage(search_documents(query), tool_call_id=call_id)
 
 
-def _format_hits(hits: list[retrieval.Hit]) -> str:
-    if not hits:
+def _format_hits(results: Results) -> str:
+    if not results.hits:
         return "No documents found."
-    return "\n\n".join(f"[{hit.doc_id}]\n{hit.text}" for hit in hits)
+    passages = []
+    for hit in results.hits:
+        label = f"[{hit.doc_id}]"
+        if hit.doc_id in results.readers:
+            label += f" (readers: {', '.join(results.readers[hit.doc_id])})"
+        passages.append(f"{label}\n{hit.text}")
+    return "\n\n".join(passages)
 
 
 def _answer(final: dict[str, Any], returned: set[str], spending: Spending) -> Answer:

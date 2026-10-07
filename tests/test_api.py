@@ -268,10 +268,16 @@ def test_concurrent_searches_each_answer_as_their_own_caller(
 
 
 def test_the_api_settings_hold_no_provisioning_password(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("NEEDTOKNOW_ADMIN_USER", "NEEDTOKNOW_ADMIN_PASSWORD", "NEEDTOKNOW_OWNER_PASSWORD"):
+    for name in (
+        "NEEDTOKNOW_ADMIN_USER",
+        "NEEDTOKNOW_ADMIN_PASSWORD",
+        "NEEDTOKNOW_OWNER_PASSWORD",
+        "NEEDTOKNOW_READER_PASSWORD",
+    ):
         monkeypatch.setenv(name, "provisioning-secret")
     settings = load_settings()
 
     assert "provisioning-secret" not in repr(settings)
     assert not hasattr(settings, "admin_password")
     assert not hasattr(settings, "owner_password")
+    assert not hasattr(settings, "reader_password")

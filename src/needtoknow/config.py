@@ -1,6 +1,6 @@
 # Settings read from NEEDTOKNOW_* environment variables. The defaults are the development
-# values from compose.yaml. The API process loads only Settings; the admin and owner passwords
-# live in ProvisionSettings, which only ingestion and the tests load.
+# values from compose.yaml. The API process loads only Settings; the admin, owner and reader
+# passwords live in ProvisionSettings, which only ingestion, the evaluation and the tests load.
 
 import os
 from dataclasses import dataclass
@@ -25,6 +25,7 @@ class ProvisionSettings:
     admin_user: str
     admin_password: str
     owner_password: str
+    reader_password: str
 
 
 def load_settings() -> Settings:
@@ -50,4 +51,5 @@ def load_provision_settings() -> ProvisionSettings:
         admin_user=env.get("NEEDTOKNOW_ADMIN_USER", "needtoknow"),
         admin_password=env.get("NEEDTOKNOW_ADMIN_PASSWORD", "needtoknow"),
         owner_password=env.get("NEEDTOKNOW_OWNER_PASSWORD", "needtoknow_owner"),
+        reader_password=env.get("NEEDTOKNOW_READER_PASSWORD", "needtoknow_reader"),
     )

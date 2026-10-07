@@ -2,8 +2,8 @@
 id = "hr-relocation-amir"
 title = "Relocation agreement: Amir Haddad"
 readers = ["user:amir", "group:hr"]
-fact = "6,800"
-question = "What relocation allowance was agreed for Amir Haddad?"
+fact = "REL-26-014"
+question = "What is the reference of Amir Haddad's relocation agreement?"
 allowed_user = "nadia"
 denied_user = "rafael"
 +++
@@ -13,4 +13,4 @@ The company paid a relocation allowance of 6,800 EUR, the cost of temporary hous
 months and one return flight for his family. The allowance must be repaid in part if Amir
 leaves before March 2028.
 
-This agreement is personal. It is shared only with Amir and the People team.
+The agreement is filed under reference REL-26-014. It is personal. It is shared only with Amir and the People team.
