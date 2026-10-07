@@ -15,6 +15,9 @@ dependencies = [
     "pyjwt[crypto]>=2.10",
     "fastapi>=0.142",
     "uvicorn>=0.54",
+    "langgraph>=1.2",
+    "langchain-core>=1.6",
+    "langchain-anthropic>=1.7",
 ]
 
 [tool.setuptools]
@@ -36,8 +39,13 @@ select = ["E", "W", "F", "I", "UP", "B", "S"]
 files = ["src", "tests"]
 mypy_path = "src"
 strict = true
+plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-markers = ["keycloak: needs the Keycloak server from compose.yaml"]
+markers = [
+    "keycloak: needs the Keycloak server from compose.yaml",
+    "llm: calls the paid model API, deselected by default, run with -m llm",
+]
+addopts = "-m 'not llm'"

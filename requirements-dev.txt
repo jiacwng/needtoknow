@@ -8,3 +8,7 @@ pyjwt[crypto]==2.15.1
 fastapi==0.142.4
 uvicorn==0.54.0
 httpx==0.28.1
+langgraph==1.2.14
+langchain-core==1.6.7
+langchain-anthropic==1.7.5
+anthropic==1.12.0

@@ -1,14 +1,17 @@
-# The HTTP API against the real database and model, with tokens signed by the throwaway key from
-# conftest.py: no token or a bad one is refused, results are only documents the token's employee
-# may read, and nothing in the request body can change who is asking.
+# The HTTP API against the real database and embedding model, with tokens signed by the throwaway
+# key from conftest.py and a scripted chat model: no token or a bad one is refused, results are
+# only documents the token's employee may read, and nothing in the body can change who is asking.
 
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from psycopg.rows import TupleRow
 
+from fakes import final_reply, scripted, search_call
+from needtoknow.agent import REFUSAL
 from needtoknow.api import create_app
 from needtoknow.auth import SigningKeyLookup
 from needtoknow.config import Settings
@@ -17,6 +20,8 @@ from needtoknow.corpus import Corpus
 Sign = Callable[[dict[str, object]], str]
 
 QUESTION = {"query": "What is the salary band for a senior engineer?"}
+ASK = {"question": "What is the lower bound of the 2026 salary band for senior engineers?"}
+SALARY_DOC = "hr-salary-bands-2026"
 
 
 @pytest.fixture(scope="module")
@@ -25,7 +30,9 @@ def client(
     token_settings: Settings,
     token_signing_key: SigningKeyLookup,
 ) -> Iterator[TestClient]:
-    with TestClient(create_app(token_settings, token_signing_key)) as test_client:
+    # Any call to this model fails: these tests either never reach it or bring their own.
+    model = scripted()
+    with TestClient(create_app(token_settings, token_signing_key, model)) as test_client:
         yield test_client
 
 
@@ -126,3 +133,89 @@ def test_invalid_body_is_refused(
 ) -> None:
     response = client.post("/search", json=body, headers=_julie(sign_token))
     assert response.status_code == 422
+
+
+def test_ask_without_a_token_is_refused(client: TestClient) -> None:
+    response = client.post("/ask", json=ASK)
+    assert response.status_code == 401
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(ASK | {"user": "elena"}, id="user"),
+        pytest.param(ASK | {"principals": ["group:hr"]}, id="principals"),
+        pytest.param({}, id="no-question"),
+        pytest.param({"question": ""}, id="empty-question"),
+        pytest.param({"question": "x" * 2001}, id="long-question"),
+        pytest.param({"question": 42}, id="question-not-a-string"),
+    ],
+)
+def test_ask_with_an_invalid_body_is_refused(
+    client: TestClient, sign_token: Sign, body: dict[str, object]
+) -> None:
+    response = client.post("/ask", json=body, headers=_julie(sign_token))
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("user", "groups", "reply", "expected"),
+    [
+        pytest.param(
+            "nadia",
+            ["hr"],
+            f"The lower bound is 78,400 EUR [{SALARY_DOC}].",
+            {
+                "user": "nadia",
+                "answer": f"The lower bound is 78,400 EUR [{SALARY_DOC}].",
+                "citations": [SALARY_DOC],
+                "refused": False,
+            },
+            id="nadia-allowed",
+        ),
+        pytest.param(
+            "sofia",
+            ["sales"],
+            REFUSAL,
+            {"user": "sofia", "answer": REFUSAL, "citations": [], "refused": True},
+            id="sofia-denied",
+        ),
+    ],
+)
+def test_ask_answers_as_the_token_employee(
+    owner: psycopg.Connection[TupleRow],
+    token_settings: Settings,
+    token_signing_key: SigningKeyLookup,
+    sign_token: Sign,
+    user: str,
+    groups: list[str],
+    reply: str,
+    expected: dict[str, object],
+) -> None:
+    model = scripted(search_call({"query": ASK["question"]}), final_reply(reply))
+    token = sign_token({"preferred_username": user, "groups": groups})
+
+    with TestClient(create_app(token_settings, token_signing_key, model)) as ask_client:
+        response = ask_client.post("/ask", json=ASK, headers=_bearer(token))
+
+    assert response.status_code == 200
+    assert response.json() == expected
+    search_result = model.prompts[-1][-1].text
+    assert (f"[{SALARY_DOC}]" in search_result) == (user == "nadia")
+
+
+def test_ask_with_the_budget_spent_is_unavailable(
+    owner: psycopg.Connection[TupleRow],
+    token_settings: Settings,
+    token_signing_key: SigningKeyLookup,
+    sign_token: Sign,
+) -> None:
+    model = scripted(final_reply(REFUSAL))
+    spent = replace(token_settings, budget_usd=0.0)
+
+    with TestClient(create_app(spent, token_signing_key, model)) as ask_client:
+        response = ask_client.post("/ask", json=ASK, headers=_julie(sign_token))
+
+    assert response.status_code == 503
+    assert model.prompts == []

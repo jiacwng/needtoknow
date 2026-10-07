@@ -18,6 +18,8 @@ class Settings:
     model_cache: Path
     issuer: str
     client_id: str
+    model: str
+    budget_usd: float
 
 
 def load_settings() -> Settings:
@@ -35,4 +37,6 @@ def load_settings() -> Settings:
         ).expanduser(),
         issuer=env.get("NEEDTOKNOW_ISSUER", "http://localhost:8080/realms/needtoknow"),
         client_id=env.get("NEEDTOKNOW_CLIENT_ID", "needtoknow-api"),
+        model=env.get("NEEDTOKNOW_MODEL", "claude-haiku-5-5"),
+        budget_usd=float(env.get("NEEDTOKNOW_BUDGET_USD", "2.0")),
     )
