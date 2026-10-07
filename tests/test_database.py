@@ -9,7 +9,8 @@ from psycopg.pq import TransactionStatus
 from psycopg.rows import TupleRow
 
 from needtoknow.corpus import Corpus
-from needtoknow.db import APP_ROLE, OWNER_ROLE, as_user, load_documents
+from needtoknow.db import APP_ROLE, OWNER_ROLE, as_user
+from needtoknow.ingest import ingest, split_into_chunks
 
 Connection = psycopg.Connection[TupleRow]
 
@@ -24,9 +25,7 @@ def _count(connection: Connection, query: Query) -> int:
     return int(row[0])
 
 
-def test_each_employee_sees_exactly_their_documents(
-    app: Connection, corpus: Corpus, chunks: None
-) -> None:
+def test_each_employee_sees_exactly_their_documents(app: Connection, corpus: Corpus) -> None:
     expected = {}
     seen_documents = {}
     seen_chunks = {}
@@ -44,9 +43,7 @@ def test_each_employee_sees_exactly_their_documents(
 
 
 @pytest.mark.parametrize("table", ["documents", "doc_access", "chunks"])
-def test_no_identity_sees_no_rows(
-    app: Connection, owner: Connection, chunks: None, table: str
-) -> None:
+def test_no_identity_sees_no_rows(app: Connection, owner: Connection, table: str) -> None:
     query = sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table))
     assert _count(owner, query) > 0
     assert _count(app, query) == 0
@@ -138,7 +135,9 @@ def test_malformed_principal_is_refused(app: Connection, principal: str) -> None
 
 
 def test_loading_again_replaces_the_rows(owner: Connection, corpus: Corpus) -> None:
-    load_documents(owner, corpus)
+    ingest(owner, corpus)
     readers = sum(len(doc.readers) for doc in corpus.documents)
+    chunks = sum(len(split_into_chunks(doc)) for doc in corpus.documents)
     assert _count(owner, "SELECT count(*) FROM documents") == len(corpus.documents)
     assert _count(owner, "SELECT count(*) FROM doc_access") == readers
+    assert _count(owner, "SELECT count(*) FROM chunks") == chunks

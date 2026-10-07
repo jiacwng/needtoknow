@@ -22,8 +22,10 @@ CREATE TABLE chunks (
     doc_id    TEXT NOT NULL REFERENCES documents (id),
     position  INTEGER NOT NULL,
     text      TEXT NOT NULL,
-    embedding VECTOR(384)
+    embedding VECTOR(384) NOT NULL
 );
+
+CREATE INDEX chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops);
 
 GRANT SELECT ON documents, doc_access, chunks TO needtoknow_app;
 
