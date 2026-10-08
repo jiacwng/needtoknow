@@ -24,6 +24,9 @@ dependencies = [
 package-dir = {"" = "src"}
 packages = ["needtoknow"]
 
+[tool.setuptools.package-data]
+needtoknow = ["static/chat.html"]
+
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]

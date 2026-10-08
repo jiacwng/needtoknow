@@ -2,6 +2,7 @@
 # key from conftest.py and a scripted chat model: no token or a bad one is refused, results are
 # only documents the token's employee may read, and nothing in the body can change who is asking.
 
+import re
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -50,6 +51,36 @@ def test_health_needs_no_token(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_chat_page_is_served(client: TestClient) -> None:
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert '<form id="ask"' in response.text
+
+
+def test_chat_page_calls_only_the_api_and_the_issuer(client: TestClient) -> None:
+    page = client.get("/").text
+    assert re.findall(r"fetch\(([^,)]+)", page) == [
+        '"/config"',
+        "`${config.issuer}/protocol/openid-connect/token`",
+        '"/ask"',
+    ]
+    assert "://" not in page
+    assert "src=" not in page
+    assert "<link" not in page
+
+
+def test_config_gives_the_page_the_issuer_and_client(
+    client: TestClient, token_settings: Settings
+) -> None:
+    response = client.get("/config")
+    assert response.status_code == 200
+    assert response.json() == {
+        "issuer": token_settings.issuer,
+        "client_id": token_settings.client_id,
+    }
 
 
 @pytest.mark.parametrize(
