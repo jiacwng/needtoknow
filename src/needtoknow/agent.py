@@ -7,7 +7,7 @@ import logging
 import operator
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, TypedDict
 
 import psycopg
@@ -71,6 +71,9 @@ class Answer:
     input_tokens: int
     output_tokens: int
     cost_usd: float
+    # Every search result the model was shown. The system prompt and the question are the rest
+    # of its input, so a fact absent from these never reached the model.
+    tool_outputs: tuple[str, ...] = field(repr=False)
 
 
 class AgentState(TypedDict):
@@ -87,14 +90,17 @@ def ask(
     model: BaseChatModel,
     spending: Spending,
     method: Method = Method.RLS,
+    filter_forgotten: bool = False,
 ) -> Answer:
     returned: set[str] = set()
+    outputs: list[str] = []
 
     # The principals are fixed here, outside the model's reach: the tool takes only a query.
     def search_documents(query: str) -> str:
-        results = search(connection, principals, query, SEARCH_RESULTS, method)
+        results = search(connection, principals, query, SEARCH_RESULTS, method, filter_forgotten)
         returned.update(hit.doc_id for hit in results.hits)
-        return _format_hits(results)
+        outputs.append(_format_hits(results))
+        return outputs[-1]
 
     graph = _build_graph(model, _system_prompt(method, principals), search_documents, spending)
     final = graph.invoke(
@@ -105,7 +111,7 @@ def ask(
             "output_tokens": 0,
         }
     )
-    return _answer(final, returned, spending)
+    return _answer(final, returned, tuple(outputs), spending)
 
 
 def _system_prompt(method: Method, principals: frozenset[str]) -> str:
@@ -177,7 +183,9 @@ def _format_hits(results: Results) -> str:
     return "\n\n".join(passages)
 
 
-def _answer(final: dict[str, Any], returned: set[str], spending: Spending) -> Answer:
+def _answer(
+    final: dict[str, Any], returned: set[str], tool_outputs: tuple[str, ...], spending: Spending
+) -> Answer:
     input_tokens = final["input_tokens"]
     output_tokens = final["output_tokens"]
     cost_usd = spending.price.cost(input_tokens, output_tokens)
@@ -203,6 +211,7 @@ def _answer(final: dict[str, Any], returned: set[str], spending: Spending) -> An
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cost_usd=cost_usd,
+        tool_outputs=tool_outputs,
     )
 
 
