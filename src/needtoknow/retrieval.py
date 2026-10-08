@@ -1,5 +1,5 @@
-# Nearest-neighbour search over the document chunks. search() is what the API runs: it searches
-# as one employee, so row-level security decides which chunks can come back.
+# Reads behind the agent's tools, each run as one employee so row-level security decides what
+# comes back: nearest-neighbour search over the chunks, one whole document, and the directory.
 
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
@@ -22,6 +22,27 @@ ORDER BY distance
 LIMIT %(limit)s
 """
 
+_DOCUMENT = """
+SELECT title, body
+FROM documents
+WHERE id = %(doc_id)s
+  AND EXISTS (
+    SELECT 1 FROM doc_access a
+    WHERE a.doc_id = documents.id AND a.principal = ANY(%(principals)s)
+  )
+"""
+
+_COLLEAGUES = """
+SELECT e.name, e.title, e.groups, m.name
+FROM employees e
+LEFT JOIN employees m ON m.id = e.manager
+WHERE strpos(lower(e.name), %(query)s) > 0
+   OR strpos(lower(e.title), %(query)s) > 0
+   OR EXISTS (SELECT 1 FROM unnest(e.groups) AS g WHERE strpos(lower(g), %(query)s) > 0)
+ORDER BY e.name
+LIMIT %(limit)s
+"""
+
 _PERMITTED = """
 WHERE EXISTS (
     SELECT 1 FROM doc_access a
@@ -38,6 +59,14 @@ class Hit:
     distance: float
 
 
+@dataclass(frozen=True)
+class Colleague:
+    name: str
+    title: str
+    groups: tuple[str, ...]
+    manager: str | None
+
+
 def search(
     app: psycopg.Connection[Any], principals: Iterable[str], query: str, k: int
 ) -> list[Hit]:
@@ -45,6 +74,28 @@ def search(
     embedding = embed_query(query)
     with as_user(app, principals):
         return nearest_chunks(app, embedding, k)
+
+
+# The WHERE clause repeats the documents policy, because the evaluation's other methods pass the
+# reader role, whose policies let every row through.
+def open_document(
+    app: psycopg.Connection[Any], principals: Iterable[str], doc_id: str
+) -> tuple[str, str] | None:
+    names = sorted(principals)
+    with as_user(app, names):
+        row = app.execute(_DOCUMENT, {"doc_id": doc_id, "principals": names}).fetchone()
+    return None if row is None else (row[0], row[1])
+
+
+def find_colleagues(
+    app: psycopg.Connection[Any], principals: Iterable[str], query: str, limit: int
+) -> list[Colleague]:
+    parameters = {"query": query.strip().lower(), "limit": limit}
+    with as_user(app, principals):
+        rows = app.execute(_COLLEAGUES, parameters).fetchall()
+    return [
+        Colleague(name=row[0], title=row[1], groups=tuple(row[2]), manager=row[3]) for row in rows
+    ]
 
 
 def check_k(k: int) -> None:

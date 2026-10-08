@@ -45,9 +45,13 @@ def scripted(*replies: AIMessage) -> ScriptedModel:
     return ScriptedModel(messages=iter(replies))
 
 
-def search_call(args: dict[str, Any]) -> AIMessage:
-    call = tool_call(name="search_documents", args=args, id="toolu_test")
+def call_tool(name: str, args: dict[str, Any]) -> AIMessage:
+    call = tool_call(name=name, args=args, id="toolu_test")
     return AIMessage(content="", tool_calls=[call], usage_metadata=USAGE)
+
+
+def search_call(args: dict[str, Any]) -> AIMessage:
+    return call_tool("search_documents", args)
 
 
 def final_reply(text: str) -> AIMessage:

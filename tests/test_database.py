@@ -43,7 +43,13 @@ def test_each_employee_sees_exactly_their_documents(app: Connection, corpus: Cor
     assert seen_chunks == expected
 
 
-@pytest.mark.parametrize("table", ["documents", "doc_access", "chunks"])
+def test_each_employee_sees_the_whole_directory(app: Connection, corpus: Corpus) -> None:
+    for employee in corpus.employees.values():
+        with as_user(app, employee.principals()):
+            assert _ids(app, "SELECT id FROM employees") == set(corpus.employees)
+
+
+@pytest.mark.parametrize("table", ["documents", "doc_access", "chunks", "employees"])
 def test_no_identity_sees_no_rows(app: Connection, owner: Connection, table: str) -> None:
     query = sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table))
     assert _count(owner, query) > 0
@@ -72,6 +78,7 @@ def test_every_table_has_row_level_security(owner: Connection) -> None:
         ("chunks", OWNER_ROLE, True),
         ("doc_access", OWNER_ROLE, True),
         ("documents", OWNER_ROLE, True),
+        ("employees", OWNER_ROLE, True),
     ]
 
 
@@ -142,3 +149,4 @@ def test_loading_again_replaces_the_rows(owner: Connection, corpus: Corpus) -> N
     assert _count(owner, "SELECT count(*) FROM documents") == len(corpus.documents)
     assert _count(owner, "SELECT count(*) FROM doc_access") == readers
     assert _count(owner, "SELECT count(*) FROM chunks") == chunks
+    assert _count(owner, "SELECT count(*) FROM employees") == len(corpus.employees)

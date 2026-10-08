@@ -1,5 +1,6 @@
-# The question-answering agent: a LangGraph loop in which the model searches the documents the
-# asker may read, then answers with the ids of the documents it used. Development check:
+# The question-answering agent: a LangGraph loop in which the model searches and opens the
+# documents the asker may read and looks up colleagues, then answers with the ids of the
+# documents it used. Development check:
 # PYTHONPATH=src .venv/bin/python -m needtoknow.agent --user nadia "your question"
 
 import argparse
@@ -18,6 +19,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
 
+from needtoknow import retrieval
 from needtoknow.config import load_settings
 from needtoknow.corpus import load_corpus
 from needtoknow.db import connect_app
@@ -26,8 +28,11 @@ from needtoknow.methods import Method, Results, search
 from needtoknow.providers import Spending, chat_model
 
 REFUSAL = "I found nothing you have access to on this."
-MAX_TOOL_ROUNDS = 3
+NOT_OPEN = "No document with that id is open to you."
+NO_COLLEAGUE = "No colleague matches."
+MAX_TOOL_ROUNDS = 4
 SEARCH_RESULTS = 5
+COLLEAGUE_RESULTS = 5
 
 SYSTEM_PROMPT = f"""You answer questions from employees using their company's documents.
 Call search_documents to find passages. It returns only documents the employee asking may read,
@@ -57,6 +62,35 @@ SEARCH_TOOL = {
     },
 }
 
+OPEN_DOCUMENT_TOOL = {
+    "name": "open_document",
+    "description": "Return the title and full text of one company document, given the document "
+    "id that search_documents tagged it with. Use it when the passages leave out what you need.",
+    "input_schema": {
+        "type": "object",
+        "properties": {"doc_id": {"type": "string", "description": "The document id."}},
+        "required": ["doc_id"],
+        "additionalProperties": False,
+    },
+}
+
+FIND_COLLEAGUE_TOOL = {
+    "name": "find_colleague",
+    "description": "Look up colleagues in the company directory by part of their name, job "
+    f"title or department. Returns up to {COLLEAGUE_RESULTS} people, each with their title, "
+    "departments and manager.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "A name, title or department to match."}
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+}
+
+Tools = dict[str, tuple[str, Callable[[str], str]]]
+
 _CITATION = re.compile(r"( ?)\[([a-z0-9-]+(?:, *[a-z0-9-]+)*)\]")
 
 _log = logging.getLogger(__name__)
@@ -71,8 +105,8 @@ class Answer:
     input_tokens: int
     output_tokens: int
     cost_usd: float
-    # Every search result the model was shown. The system prompt and the question are the rest
-    # of its input, so a fact absent from these never reached the model.
+    # Every tool result the model was shown. The system prompt and the question are the rest of
+    # its input, so a fact absent from these never reached the model.
     tool_outputs: tuple[str, ...] = field(repr=False)
 
 
@@ -95,14 +129,34 @@ def ask(
     returned: set[str] = set()
     outputs: list[str] = []
 
-    # The principals are fixed here, outside the model's reach: the tool takes only a query.
+    # The principals are fixed here, outside the model's reach: each tool takes only one string.
     def search_documents(query: str) -> str:
         results = search(connection, principals, query, SEARCH_RESULTS, method, filter_forgotten)
         returned.update(hit.doc_id for hit in results.hits)
         outputs.append(_format_hits(results))
         return outputs[-1]
 
-    graph = _build_graph(model, _system_prompt(method, principals), search_documents, spending)
+    def open_document(doc_id: str) -> str:
+        document = retrieval.open_document(connection, principals, doc_id)
+        if document is None:
+            outputs.append(NOT_OPEN)
+        else:
+            returned.add(doc_id)
+            title, body = document
+            outputs.append(f"[{doc_id}]\n{title}\n\n{body.strip()}")
+        return outputs[-1]
+
+    def find_colleague(query: str) -> str:
+        colleagues = retrieval.find_colleagues(connection, principals, query, COLLEAGUE_RESULTS)
+        outputs.append("\n".join(map(_format_colleague, colleagues)) or NO_COLLEAGUE)
+        return outputs[-1]
+
+    tools: Tools = {
+        "search_documents": ("query", search_documents),
+        "open_document": ("doc_id", open_document),
+        "find_colleague": ("query", find_colleague),
+    }
+    graph = _build_graph(model, _system_prompt(method, principals), tools, spending)
     final = graph.invoke(
         {
             "messages": [HumanMessage(question)],
@@ -123,10 +177,12 @@ def _system_prompt(method: Method, principals: frozenset[str]) -> str:
 def _build_graph(
     model: BaseChatModel,
     system_prompt: str,
-    search_documents: Callable[[str], str],
+    tools: Tools,
     spending: Spending,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
-    model_with_tools = model.bind_tools([SEARCH_TOOL], strict=True)
+    model_with_tools = model.bind_tools(
+        [SEARCH_TOOL, OPEN_DOCUMENT_TOOL, FIND_COLLEAGUE_TOOL], strict=True
+    )
 
     def call_model(state: AgentState) -> dict[str, Any]:
         spending.check()
@@ -141,7 +197,7 @@ def _build_graph(
     def call_tools(state: AgentState) -> dict[str, Any]:
         reply = state["messages"][-1]
         calls = reply.tool_calls if isinstance(reply, AIMessage) else []
-        results = [_run_tool(call, search_documents) for call in calls]
+        results = [_run_tool(call, tools) for call in calls]
         return {"messages": results, "tool_rounds": state["tool_rounds"] + 1}
 
     def after_model(state: AgentState) -> str:
@@ -160,15 +216,27 @@ def _build_graph(
     return graph.compile()
 
 
-def _run_tool(call: ToolCall, search_documents: Callable[[str], str]) -> ToolMessage:
+def _run_tool(call: ToolCall, tools: Tools) -> ToolMessage:
     call_id = call["id"] or ""
-    query = call["args"].get("query")
-    if call["name"] != SEARCH_TOOL["name"] or set(call["args"]) != {"query"}:
-        error = f"unknown tool or arguments, call {SEARCH_TOOL['name']} with a query only"
+    if call["name"] not in tools:
+        error = f"unknown tool, call one of {', '.join(tools)}"
         return ToolMessage(error, tool_call_id=call_id, status="error")
-    if not isinstance(query, str) or not query.strip():
-        return ToolMessage("query must be a non-empty string", tool_call_id=call_id, status="error")
-    return ToolMessage(search_documents(query), tool_call_id=call_id)
+    argument, run = tools[call["name"]]
+    if set(call["args"]) != {argument}:
+        error = f"wrong arguments, call {call['name']} with a {argument} only"
+        return ToolMessage(error, tool_call_id=call_id, status="error")
+    value = call["args"][argument]
+    if not isinstance(value, str) or not value.strip():
+        error = f"{argument} must be a non-empty string"
+        return ToolMessage(error, tool_call_id=call_id, status="error")
+    return ToolMessage(run(value), tool_call_id=call_id)
+
+
+def _format_colleague(colleague: retrieval.Colleague) -> str:
+    line = f"{colleague.name}, {colleague.title}, {' and '.join(colleague.groups)}"
+    if colleague.manager is not None:
+        line += f", reports to {colleague.manager}"
+    return line
 
 
 def _format_hits(results: Results) -> str:

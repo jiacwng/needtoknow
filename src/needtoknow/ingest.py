@@ -1,5 +1,6 @@
-# Splits each document into chunks, embeds them, and writes documents, access rows and chunks
-# in one transaction. `python -m needtoknow.ingest` loads corpus/ into a freshly created schema.
+# Splits each document into chunks, embeds them, and writes documents, access rows, chunks and
+# the employee directory in one transaction. `python -m needtoknow.ingest` loads corpus/ into a
+# freshly created schema.
 
 import re
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from needtoknow.provision import (
     connect_owner,
     create_schema,
     load_documents,
+    load_employees,
     prepare_database,
 )
 
@@ -56,6 +58,7 @@ def ingest(owner: psycopg.Connection[Any], corpus: Corpus) -> Ingested:
     embeddings = embed_passages([chunk.text for chunk in chunks])
     with owner.transaction(), owner.cursor() as cursor:
         load_documents(owner, corpus)
+        load_employees(owner, corpus)
         cursor.executemany(
             "INSERT INTO chunks (doc_id, position, text, embedding) VALUES (%s, %s, %s, %s)",
             [
