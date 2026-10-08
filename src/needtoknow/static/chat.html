@@ -1,0 +1,126 @@
+<!doctype html>
+<!-- The demo chat page: sign in through Keycloak, ask a question, read the answer and its sources. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>needtoknow</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  form { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  input { flex: 1; padding: 0.4rem; font: inherit; }
+  button { padding: 0.4rem 0.8rem; font: inherit; }
+  #error { color: #b00020; }
+  .reply { border-left: 4px solid #2a7; padding: 0.5rem 1rem; margin: 1rem 0; background: #f6f6f6; }
+  .reply.refused { border-left-color: #b00020; }
+  .question { font-weight: bold; }
+  .label { color: #b00020; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>needtoknow</h1>
+<form id="login">
+  <input name="username" placeholder="username" autocomplete="username" required>
+  <input name="password" type="password" placeholder="password" autocomplete="current-password" required>
+  <button>Sign in</button>
+</form>
+<p id="who" hidden></p>
+<form id="ask" hidden>
+  <input name="question" placeholder="Ask a question" maxlength="2000" required>
+  <button>Ask</button>
+</form>
+<p id="error"></p>
+<div id="replies"></div>
+<script>
+  const login = document.getElementById("login");
+  const ask = document.getElementById("ask");
+  const who = document.getElementById("who");
+  const error = document.getElementById("error");
+  const replies = document.getElementById("replies");
+  let token = null;
+
+  function signedIn(username) {
+    login.hidden = username !== null;
+    ask.hidden = username === null;
+    who.hidden = username === null;
+    who.textContent = username === null ? "" : `Signed in as ${username}`;
+  }
+
+  login.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.textContent = "";
+    const config = await (await fetch("/config")).json();
+    const form = new FormData(login);
+    const response = await fetch(`${config.issuer}/protocol/openid-connect/token`, {
+      method: "POST",
+      body: new URLSearchParams({
+        grant_type: "password",
+        client_id: config.client_id,
+        username: form.get("username"),
+        password: form.get("password"),
+        scope: "openid",
+      }),
+    });
+    if (!response.ok) {
+      error.textContent = "wrong username or password";
+      return;
+    }
+    token = (await response.json()).access_token;
+    login.reset();
+    signedIn(form.get("username"));
+  });
+
+  ask.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.textContent = "";
+    const question = new FormData(ask).get("question");
+    const response = await fetch("/ask", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    if (response.status === 401) {
+      token = null;
+      signedIn(null);
+      error.textContent = "login expired, sign in again";
+      return;
+    }
+    const body = await response.json();
+    if (!response.ok) {
+      error.textContent = typeof body.detail === "string" ? body.detail : `error ${response.status}`;
+      return;
+    }
+    show(question, body);
+    ask.reset();
+  });
+
+  function show(question, body) {
+    const reply = document.createElement("div");
+    reply.className = body.refused ? "reply refused" : "reply";
+    const asked = document.createElement("p");
+    asked.className = "question";
+    asked.textContent = question;
+    reply.append(asked);
+    if (body.refused) {
+      const label = document.createElement("p");
+      label.className = "label";
+      label.textContent = "Refused";
+      reply.append(label);
+    }
+    const answer = document.createElement("p");
+    answer.textContent = body.answer;
+    reply.append(answer);
+    if (body.citations.length > 0) {
+      const list = document.createElement("ul");
+      for (const id of body.citations) {
+        const item = document.createElement("li");
+        item.textContent = id;
+        list.append(item);
+      }
+      reply.append("Sources:", list);
+    }
+    replies.prepend(reply);
+  }
+</script>
+</body>
+</html>

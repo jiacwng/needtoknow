@@ -18,6 +18,7 @@ class Settings:
     client_id: str
     model: str
     budget_usd: float
+    mcp_port: int
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ def load_settings() -> Settings:
         client_id=env.get("NEEDTOKNOW_CLIENT_ID", "needtoknow-api"),
         model=env.get("NEEDTOKNOW_MODEL", "claude-haiku-5-5"),
         budget_usd=float(env.get("NEEDTOKNOW_BUDGET_USD", "2.0")),
+        mcp_port=int(env.get("NEEDTOKNOW_MCP_PORT", "8001")),
     )
 
 
