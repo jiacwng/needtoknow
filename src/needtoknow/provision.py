@@ -1,5 +1,6 @@
 # Sets up the database: the admin creates the owner, app and reader roles, the owner creates the
-# tables and loads the documents. Only ingestion and the tests run this; the API never does.
+# tables and loads the documents and the employee directory. Only ingestion and the tests run
+# this; the API never does.
 
 from pathlib import Path
 from typing import Any
@@ -80,4 +81,13 @@ def load_documents(owner: psycopg.Connection[Any], corpus: Corpus) -> None:
         cursor.executemany(
             "INSERT INTO doc_access (doc_id, principal) VALUES (%s, %s)",
             [(doc.id, reader) for doc in corpus.documents for reader in doc.readers],
+        )
+
+
+def load_employees(owner: psycopg.Connection[Any], corpus: Corpus) -> None:
+    with owner.transaction(), owner.cursor() as cursor:
+        cursor.execute("TRUNCATE employees")
+        cursor.executemany(
+            "INSERT INTO employees (id, name, title, groups, manager) VALUES (%s, %s, %s, %s, %s)",
+            [(e.id, e.name, e.title, list(e.groups), e.manager) for e in corpus.employees.values()],
         )

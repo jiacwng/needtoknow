@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from psycopg.rows import TupleRow
 
-from fakes import final_reply, scripted, search_call
+from fakes import call_tool, final_reply, scripted, search_call
 from needtoknow.agent import REFUSAL
 from needtoknow.api import create_app
 from needtoknow.auth import SigningKeyLookup
@@ -219,6 +219,28 @@ def test_ask_answers_as_the_token_employee(
     assert response.json() == expected
     search_result = model.prompts[-1][-1].text
     assert (f"[{SALARY_DOC}]" in search_result) == (user == "nadia")
+
+
+def test_ask_after_opening_a_document_keeps_the_response_shape(
+    owner: psycopg.Connection[TupleRow],
+    token_settings: Settings,
+    token_signing_key: SigningKeyLookup,
+    sign_token: Sign,
+) -> None:
+    reply = f"The lower bound is 78,400 EUR [{SALARY_DOC}]."
+    model = scripted(call_tool("open_document", {"doc_id": SALARY_DOC}), final_reply(reply))
+    token = sign_token({"preferred_username": "nadia", "groups": ["hr"]})
+
+    with TestClient(create_app(token_settings, token_signing_key, model)) as ask_client:
+        response = ask_client.post("/ask", json=ASK, headers=_bearer(token))
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "user": "nadia",
+        "answer": reply,
+        "citations": [SALARY_DOC],
+        "refused": False,
+    }
 
 
 def test_ask_with_the_budget_spent_is_unavailable(

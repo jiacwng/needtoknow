@@ -1,6 +1,6 @@
-# The agent with a scripted model and the real database: the search tool runs with the asker's
-# principals and nothing the model sends can change them, citations the search never returned
-# are dropped, and the round cap, the budget and the price table stop runaway or unpriced calls.
+# The agent with a scripted model and the real database: every tool runs with the asker's
+# principals and nothing the model sends can change them, citations no tool returned are
+# dropped, and the round cap, the budget and the price table stop runaway or unpriced calls.
 
 import re
 from dataclasses import replace
@@ -10,9 +10,11 @@ import pytest
 from langchain_core.messages import ToolMessage
 from psycopg.rows import TupleRow
 
-from fakes import USAGE, ScriptedModel, final_reply, scripted, search_call
+from fakes import USAGE, ScriptedModel, call_tool, final_reply, scripted, search_call
 from needtoknow.agent import (
     MAX_TOOL_ROUNDS,
+    NO_COLLEAGUE,
+    NOT_OPEN,
     REFUSAL,
     SEARCH_RESULTS,
     SYSTEM_PROMPT,
@@ -259,3 +261,111 @@ def test_a_method_on_the_wrong_role_is_refused(app: Connection, corpus: Corpus) 
 
     with pytest.raises(ValueError, match="prompt_only searches as needtoknow_reader"):
         ask(QUESTION, app, principals, model, Spending(MODEL, budget_usd=1.0), Method.PROMPT_ONLY)
+
+
+def test_an_opened_document_gives_its_full_text_and_counts_as_returned(
+    app: Connection, corpus: Corpus
+) -> None:
+    model = scripted(
+        search_call({"query": QUESTION}),
+        call_tool("open_document", {"doc_id": SALARY_DOC}),
+        final_reply(f"The lower bound is 78,400 EUR [{SALARY_DOC}]."),
+    )
+
+    answer = _ask(app, corpus, "nadia", model)
+
+    opened = _tool_results(model)[-1]
+    salary = next(doc for doc in corpus.documents if doc.id == SALARY_DOC)
+    assert opened.status == "success"
+    assert opened.text == f"[{SALARY_DOC}]\n{salary.title}\n\n{salary.body.strip()}"
+    assert answer.citations == (SALARY_DOC,)
+    assert answer.tool_outputs[-1] == opened.text
+
+
+@pytest.mark.parametrize("doc_id", [SALARY_DOC, "no-such-document"])
+def test_a_denied_and_an_unknown_document_get_the_same_reply(
+    app: Connection, corpus: Corpus, doc_id: str
+) -> None:
+    model = scripted(
+        call_tool("open_document", {"doc_id": doc_id}),
+        final_reply(f"See the salary bands [{doc_id}]."),
+    )
+
+    answer = _ask(app, corpus, "sofia", model)
+
+    (result,) = _tool_results(model)
+    assert result.status == "success"
+    assert result.text == NOT_OPEN
+    assert answer.citations == ()
+    assert answer.dropped_citations == (doc_id,)
+
+
+def test_open_document_on_the_reader_role_still_hides_a_denied_document(
+    reader: Connection, corpus: Corpus
+) -> None:
+    model = scripted(call_tool("open_document", {"doc_id": SALARY_DOC}), final_reply(REFUSAL))
+    principals = corpus.employees["sofia"].principals()
+
+    ask(QUESTION, reader, principals, model, Spending(MODEL, budget_usd=1.0), Method.PROMPT_ONLY)
+
+    (result,) = _tool_results(model)
+    assert result.text == NOT_OPEN
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        pytest.param(
+            "nadia", "Nadia Benali, HR Specialist, hr, reports to Chloe Martin", id="name"
+        ),
+        pytest.param(
+            "SALES",
+            "Ben Carter, Sales Development Representative, sales, reports to Marco Bianchi\n"
+            "Marco Bianchi, Head of Sales, sales, reports to Elena Duval\n"
+            "Sofia Novak, Account Executive, sales, reports to Marco Bianchi",
+            id="department",
+        ),
+        pytest.param(
+            "chief financial",
+            "Tomas Lindqvist, Chief Financial Officer, executives and finance, "
+            "reports to Elena Duval",
+            id="title",
+        ),
+        pytest.param("zebra", NO_COLLEAGUE, id="no-match"),
+    ],
+)
+def test_find_colleague_searches_the_directory(
+    app: Connection, corpus: Corpus, query: str, expected: str
+) -> None:
+    model = scripted(call_tool("find_colleague", {"query": query}), final_reply(REFUSAL))
+
+    _ask(app, corpus, "julie", model)
+
+    (result,) = _tool_results(model)
+    assert result.status == "success"
+    assert result.text == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        pytest.param(
+            "open_document", {"doc_id": SALARY_DOC, "principals": ["group:hr"]}, id="extra"
+        ),
+        pytest.param("open_document", {"query": SALARY_DOC}, id="wrong-name"),
+        pytest.param("open_document", {"doc_id": ""}, id="empty"),
+        pytest.param("find_colleague", {"query": "   "}, id="blank"),
+        pytest.param("find_colleague", {"query": 7}, id="not-a-string"),
+        pytest.param("delete_documents", {"query": "all"}, id="unknown-tool"),
+    ],
+)
+def test_a_tool_call_with_wrong_arguments_is_an_error(
+    app: Connection, corpus: Corpus, name: str, args: dict[str, object]
+) -> None:
+    model = scripted(call_tool(name, args), final_reply(REFUSAL))
+
+    answer = _ask(app, corpus, "nadia", model)
+
+    (result,) = _tool_results(model)
+    assert result.status == "error"
+    assert answer.tool_outputs == ()
