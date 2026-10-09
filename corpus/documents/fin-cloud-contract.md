@@ -16,4 +16,7 @@ the discounted rate.
 If our usage falls below the commitment, we still pay the committed amount. Finance reviews
 actual usage with the CTO every month.
 
+Since July 2026 our usage has been above the commitment, because engineering runs load tests
+for the new event pipeline.
+
 The contract terms are confidential under the agreement with the provider.

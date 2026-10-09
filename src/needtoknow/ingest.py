@@ -1,6 +1,6 @@
-# Splits each document into chunks, embeds them, and writes documents, access rows, chunks and
-# the employee directory in one transaction. `python -m needtoknow.ingest` loads corpus/ into a
-# freshly created schema.
+# Splits each document into chunks, embeds them, and writes documents, access rows, chunks, the
+# employee directory and the workplace data in one transaction. `python -m needtoknow.ingest`
+# loads corpus/ into a freshly created schema.
 
 import re
 from dataclasses import dataclass
@@ -18,8 +18,10 @@ from needtoknow.provision import (
     create_schema,
     load_documents,
     load_employees,
+    load_workplace,
     prepare_database,
 )
+from needtoknow.workplace import Workplace, read_workplace
 
 CORPUS = Path(__file__).resolve().parents[2] / "corpus"
 CHUNK_CHARS = 800
@@ -52,13 +54,14 @@ def split_into_chunks(document: Document) -> list[Chunk]:
     ]
 
 
-def ingest(owner: psycopg.Connection[Any], corpus: Corpus) -> Ingested:
+def ingest(owner: psycopg.Connection[Any], corpus: Corpus, workplace: Workplace) -> Ingested:
     chunks = [chunk for document in corpus.documents for chunk in split_into_chunks(document)]
     # Embedding takes seconds, so it runs before the transaction opens and holds no locks.
     embeddings = embed_passages([chunk.text for chunk in chunks])
     with owner.transaction(), owner.cursor() as cursor:
         load_documents(owner, corpus)
         load_employees(owner, corpus)
+        load_workplace(owner, workplace)
         cursor.executemany(
             "INSERT INTO chunks (doc_id, position, text, embedding) VALUES (%s, %s, %s, %s)",
             [
@@ -77,11 +80,12 @@ def main() -> None:
     settings = load_settings()
     provision = load_provision_settings()
     corpus = load_corpus(CORPUS)
+    workplace = read_workplace(CORPUS, corpus)
     with connect_admin(settings, provision) as admin:
         prepare_database(admin, settings, provision)
     with connect_owner(settings, provision) as owner:
         create_schema(owner)
-        ingested = ingest(owner, corpus)
+        ingested = ingest(owner, corpus, workplace)
     print(
         f"ingested {ingested.documents} documents, {ingested.access_rows} access rows "
         f"and {ingested.chunks} chunks"

@@ -12,6 +12,7 @@ from needtoknow.corpus import Corpus
 from needtoknow.db import APP_ROLE, as_user
 from needtoknow.ingest import ingest, split_into_chunks
 from needtoknow.provision import OWNER_ROLE
+from needtoknow.workplace import Workplace
 
 Connection = psycopg.Connection[TupleRow]
 
@@ -49,7 +50,24 @@ def test_each_employee_sees_the_whole_directory(app: Connection, corpus: Corpus)
             assert _ids(app, "SELECT id FROM employees") == set(corpus.employees)
 
 
-@pytest.mark.parametrize("table", ["documents", "doc_access", "chunks", "employees"])
+@pytest.mark.parametrize(
+    "table",
+    [
+        "documents",
+        "doc_access",
+        "chunks",
+        "employees",
+        "spending",
+        "forecasts",
+        "meetings",
+        "meeting_attendees",
+        "tasks",
+        "spending_by_month",
+        "forecast_vs_actual",
+        "open_tasks",
+        "my_meetings",
+    ],
+)
 def test_no_identity_sees_no_rows(app: Connection, owner: Connection, table: str) -> None:
     query = sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table))
     assert _count(owner, query) > 0
@@ -79,6 +97,11 @@ def test_every_table_has_row_level_security(owner: Connection) -> None:
         ("doc_access", OWNER_ROLE, True),
         ("documents", OWNER_ROLE, True),
         ("employees", OWNER_ROLE, True),
+        ("forecasts", OWNER_ROLE, True),
+        ("meeting_attendees", OWNER_ROLE, True),
+        ("meetings", OWNER_ROLE, True),
+        ("spending", OWNER_ROLE, True),
+        ("tasks", OWNER_ROLE, True),
     ]
 
 
@@ -142,8 +165,10 @@ def test_malformed_principal_is_refused(app: Connection, principal: str) -> None
     assert app.info.transaction_status == TransactionStatus.IDLE
 
 
-def test_loading_again_replaces_the_rows(owner: Connection, corpus: Corpus) -> None:
-    ingest(owner, corpus)
+def test_loading_again_replaces_the_rows(
+    owner: Connection, corpus: Corpus, workplace: Workplace
+) -> None:
+    ingest(owner, corpus, workplace)
     readers = sum(len(doc.readers) for doc in corpus.documents)
     chunks = sum(len(split_into_chunks(doc)) for doc in corpus.documents)
     assert _count(owner, "SELECT count(*) FROM documents") == len(corpus.documents)
