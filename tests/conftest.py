@@ -19,6 +19,7 @@ from needtoknow.corpus import Corpus, load_corpus
 from needtoknow.db import connect_app, connect_reader
 from needtoknow.ingest import CORPUS, ingest
 from needtoknow.provision import connect_admin, connect_owner, create_schema, prepare_database
+from needtoknow.workplace import Workplace, read_workplace
 
 TOKEN_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
@@ -29,7 +30,12 @@ def corpus() -> Corpus:
 
 
 @pytest.fixture(scope="session")
-def owner(corpus: Corpus) -> Iterator[psycopg.Connection[TupleRow]]:
+def workplace(corpus: Corpus) -> Workplace:
+    return read_workplace(CORPUS, corpus)
+
+
+@pytest.fixture(scope="session")
+def owner(corpus: Corpus, workplace: Workplace) -> Iterator[psycopg.Connection[TupleRow]]:
     settings = load_settings()
     provision = load_provision_settings()
     try:
@@ -44,7 +50,7 @@ def owner(corpus: Corpus) -> Iterator[psycopg.Connection[TupleRow]]:
         prepare_database(admin, settings, provision)
     with connect_owner(settings, provision) as connection:
         create_schema(connection)
-        ingest(connection, corpus)
+        ingest(connection, corpus, workplace)
         yield connection
 
 

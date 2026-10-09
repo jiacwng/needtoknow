@@ -1,6 +1,6 @@
 # Sets up the database: the admin creates the owner, app and reader roles, the owner creates the
-# tables and loads the documents and the employee directory. Only ingestion and the tests run
-# this; the API never does.
+# tables and loads the documents, the employee directory and the workplace data. Only ingestion
+# and the tests run this; the API never does.
 
 from pathlib import Path
 from typing import Any
@@ -13,6 +13,7 @@ from psycopg.rows import TupleRow
 from needtoknow.config import ProvisionSettings, Settings
 from needtoknow.corpus import Corpus
 from needtoknow.db import APP_ROLE, READER_ROLE, connect
+from needtoknow.workplace import Workplace
 
 OWNER_ROLE = "needtoknow_owner"
 SCHEMA = Path(__file__).resolve().parents[2] / "sql" / "schema.sql"
@@ -86,8 +87,39 @@ def load_documents(owner: psycopg.Connection[Any], corpus: Corpus) -> None:
 
 def load_employees(owner: psycopg.Connection[Any], corpus: Corpus) -> None:
     with owner.transaction(), owner.cursor() as cursor:
-        cursor.execute("TRUNCATE employees")
+        cursor.execute("TRUNCATE employees CASCADE")
         cursor.executemany(
             "INSERT INTO employees (id, name, title, groups, manager) VALUES (%s, %s, %s, %s, %s)",
             [(e.id, e.name, e.title, list(e.groups), e.manager) for e in corpus.employees.values()],
+        )
+
+
+def load_workplace(owner: psycopg.Connection[Any], workplace: Workplace) -> None:
+    with owner.transaction(), owner.cursor() as cursor:
+        cursor.execute(
+            "TRUNCATE spending, forecasts, meeting_attendees, meetings, tasks RESTART IDENTITY"
+        )
+        cursor.executemany(
+            "INSERT INTO spending (department, vendor, month, amount_eur) VALUES (%s, %s, %s, %s)",
+            [(s.department, s.vendor, s.month, s.amount_eur) for s in workplace.spending],
+        )
+        cursor.executemany(
+            "INSERT INTO forecasts (department, month, amount_eur) VALUES (%s, %s, %s)",
+            [(f.department, f.month, f.amount_eur) for f in workplace.forecasts],
+        )
+        cursor.executemany(
+            "WITH meeting AS ("
+            "INSERT INTO meetings (organizer, title, starts_at, ends_at) "
+            "VALUES (%s, %s, %s, %s) RETURNING id) "
+            "INSERT INTO meeting_attendees (meeting_id, employee) "
+            "SELECT meeting.id, attendee FROM meeting, unnest(%s::text[]) AS attendee",
+            [
+                (m.organizer, m.title, m.starts_at, m.ends_at, list(m.attendees))
+                for m in workplace.meetings
+            ],
+        )
+        cursor.executemany(
+            "INSERT INTO tasks (title, description, owner, assignee, due_date) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            [(t.title, t.description, t.owner, t.assignee, t.due_date) for t in workplace.tasks],
         )
